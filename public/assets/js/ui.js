@@ -171,6 +171,21 @@ export function downloadJson(filename, value) {
   downloadText(filename, `${JSON.stringify(value, null, 2)}\n`, 'application/json;charset=utf-8');
 }
 
+export function renderConfigCompare(oldText, newText) {
+  const oldLines = String(oldText ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const newLines = String(newText ?? '').replace(/\r\n?/g, '\n').split('\n');
+  return `<div class="config-compare" role="region" aria-label="Old and new configuration">
+    <section class="config-pane old">
+      <div class="config-pane-head"><span>Old configuration</span><small>${oldLines.length} lines</small></div>
+      <pre><code>${esc(oldText)}</code></pre>
+    </section>
+    <section class="config-pane new">
+      <div class="config-pane-head"><span>New fixed configuration</span><small>${newLines.length} lines</small></div>
+      <pre><code>${esc(newText)}</code></pre>
+    </section>
+  </div>`;
+}
+
 export function renderDiff(diff, options = {}) {
   const rows = options.compact ? diff.hunks.flatMap((hunk) => hunk.rows) : diff.rows;
   if (rows.length === 0) {

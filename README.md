@@ -30,6 +30,10 @@ The published container is a static file server. All parsing, analysis, topology
 |---|---|
 | ![Service wizard](docs/screenshots/services.png) | ![Security](docs/screenshots/security.png) |
 
+| Warning fix with old/new config review |
+|---|
+| ![Warning fix](docs/screenshots/fix-dialog.png) |
+
 All screenshots use the included anonymised example configurations.
 
 ---
@@ -67,7 +71,18 @@ The analyzer reports errors, warnings and recommendations across:
 - Logging, runtime socket permissions, `maxconn`, connection reuse and stick-table expiry
 - HAProxy 3.x blockers: removed syntax, `program`/`mailers`, duplicate names, `enabled` dynamic servers, renamed OCSP tuning, deprecated directives
 
-Each finding has a line number, explanation, why it matters and a concrete recommendation. The **Best practices** tab adds a pass/review/fail checklist plus opt-in, diff-previewed fixes for TLS baseline, missing timeouts, server health checks and client-IP forwarding.
+Each finding has a line number, explanation, why it matters and a concrete recommendation. The **Best practices** tab adds a pass/review/fail checklist plus opt-in, diff-previewed fixes for TLS baseline, missing timeouts, server health checks, Runtime API hardening and client-IP forwarding.
+
+Findings that have a safe deterministic remediation expose a **Fix this** button directly. Clicking it shows:
+
+- the full old configuration and the full new fixed configuration side by side
+- the resolved fix summary
+- score and error/warning deltas
+- the exact line diff
+- the risk to review before applying
+- an apply step that creates a new local history version
+
+The health-check warning in the examples — “Health-check options are set but no server has `check`” — is fixed directly by enabling `check inter 2s fall 3 rise 2` on the affected server lines. The old version remains available in History. Warnings that require an environment-specific decision (certificate paths, client CA bundles, logging destinations) still show manual guidance rather than making an unsafe change.
 
 ### See and simulate the routing graph
 

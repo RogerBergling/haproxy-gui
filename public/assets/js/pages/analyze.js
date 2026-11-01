@@ -2,7 +2,9 @@ import { CATEGORY_LABELS, analyzeConfig } from '../config/analyzer.js';
 import {
   BEST_PRACTICE_FIXES,
   applyBestPracticeFixes,
+  applyFindingFix,
   buildBestPracticeChecklist,
+  canFixFinding,
 } from '../config/bestpractices.js';
 import { diffLines } from '../config/diff.js';
 import { parseConfig } from '../config/parser.js';
@@ -15,6 +17,7 @@ import {
   esc,
   formatDate,
   icon,
+  renderConfigCompare,
   renderDiff,
   scoreGauge,
   severityPill,
@@ -29,8 +32,9 @@ const STATUS = {
   'n/a': { label: 'Not applicable', tone: 'neutral', icon: 'info' },
 };
 
-function findingCard(finding) {
+function findingCard(finding, index, model) {
   const severity = SEVERITY[finding.severity] || SEVERITY.info;
+  const fixable = canFixFinding(model, finding);
   const lineLink = finding.line
     ? `<a class="line-link" href="#/workbench?line=${finding.line}">line ${finding.line} ${icon('arrow')}</a>`
     : '';
@@ -43,7 +47,10 @@ function findingCard(finding) {
       <span class="finding-category">${esc(CATEGORY_LABELS[finding.category] || finding.category)}</span>
       ${finding.section ? `<span class="finding-section">${esc(finding.section)}</span>` : ''}
       ${version}
-      ${lineLink}
+      <div class="finding-actions">
+        ${fixable ? `<button class="btn btn-primary btn-sm" type="button" data-fix-finding="${index}" title="Preview a safe fix and compare the old and new configuration">${icon('save')}Fix this</button>` : ''}
+        ${lineLink}
+      </div>
     </div>
     <h3>${esc(finding.title)}</h3>
     <p>${esc(finding.detail)}</p>
@@ -199,7 +206,7 @@ export async function renderAnalyze(view, query) {
         <span class="filter-result" data-filter-result>${analysis.findings.length} shown</span>
       </div>
       <div class="finding-list" data-finding-list>
-        ${analysis.findings.length ? analysis.findings.map(findingCard).join('') : `<div class="empty-panel">${icon('check')}<h2>No findings</h2><p>The built-in analyzer found nothing in this configuration. That is unusual; still validate with <code>haproxy -c</code> and a staging test.</p></div>`}
+        ${analysis.findings.length ? analysis.findings.map((finding, index) => findingCard(finding, index, model)).join('') : `<div class="empty-panel">${icon('check')}<h2>No findings</h2><p>The built-in analyzer found nothing in this configuration. That is unusual; still validate with <code>haproxy -c</code> and a staging test.</p></div>`}
       </div>
       <div class="empty-filter" data-finding-empty hidden>${icon('search')}No findings match the current filter.</div>
       <div class="callout info analyze-disclaimer">${icon('info')}<p><strong>What this does not do:</strong> it does not execute HAProxy, resolve DNS, read certificate files, validate Lua or know your application’s semantics. Use <code>haproxy -c -f</code> with the target binary and test in staging.</p></div>
@@ -287,6 +294,88 @@ export async function renderAnalyze(view, query) {
   });
   applyFilters();
 
+  const openFindingFix = (finding) => {
+    const result = applyFindingFix(current.text, finding);
+    if (!result.applied.length) {
+      toast('No safe automatic fix could be applied to this finding. Use the recommendation as a manual change.', { tone: 'neutral', duration: 5500 });
+      return;
+    }
+    const proposedModel = parseConfig(result.text);
+    const proposedAnalysis = analyzeConfig(proposedModel);
+    const diff = diffLines(current.text, result.text);
+    const appliedFixes = result.applied
+      .map((item) => BEST_PRACTICE_FIXES.find((fix) => fix.id === item.id))
+      .filter(Boolean);
+    const risks = [...new Set(appliedFixes.map((fix) => fix.risk).filter(Boolean))];
+    const errorIncrease = proposedAnalysis.counts.error > analysis.counts.error;
+
+    const dialog = document.createElement('dialog');
+    dialog.className = 'modal fix-preview-modal';
+    dialog.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-head">
+          <span class="pill accent">${icon('save')}Safe automatic fix</span>
+          <h2>Fix: ${esc(finding.title)}</h2>
+          <p class="modal-lede">${esc(finding.detail)}</p>
+        </div>
+        <div class="fix-impact">
+          <span class="pill">Score ${analysis.score} → <strong>${proposedAnalysis.score}</strong></span>
+          <span class="pill ${proposedAnalysis.counts.error ? 'danger' : 'ok'}">${proposedAnalysis.counts.error} errors</span>
+          <span class="pill ${proposedAnalysis.counts.warning ? 'warn' : 'ok'}">${proposedAnalysis.counts.warning} warnings</span>
+          <span class="pill neutral">${diff.added} added / ${diff.removed} removed</span>
+        </div>
+        <ul class="applied-list">${result.applied.map((item) => `<li>${icon('check')}<span><strong>${esc(item.title)}</strong> — ${esc(item.summary)}</span></li>`).join('')}</ul>
+        ${errorIncrease ? `<div class="callout danger">${icon('warning')}<p><strong>Do not apply this automatically.</strong> The proposed config contains more errors than the current one. Review the diff and fix it manually.</p></div>` : ''}
+        <div class="section-head small"><div><span class="eyebrow">Review</span><h3>Old vs new fixed configuration</h3></div><p>Both versions are shown in full. The old version remains in local history after applying.</p></div>
+        ${renderConfigCompare(current.text, result.text)}
+        <details class="fix-details"><summary>Show exact line diff (+${diff.added} / −${diff.removed})</summary>${renderDiff(diff, { compact: true })}</details>
+        ${risks.length ? `<div class="callout warn fix-risk">${icon('warning')}<div><strong>Risk to review</strong><ul>${risks.map((risk) => `<li>${esc(risk)}</li>`).join('')}</ul></div></div>` : ''}
+        <div class="modal-actions">
+          <button class="btn btn-ghost" type="button" data-action="cancel-finding-fix">Cancel</button>
+          <button class="btn btn-primary" type="button" data-action="apply-finding-fix" ${errorIncrease ? 'disabled' : ''}>${icon('save')}Apply fix and save version</button>
+        </div>
+      </div>`;
+    document.body.append(dialog);
+
+    const close = () => {
+      if (dialog.open) dialog.close();
+    };
+    dialog.addEventListener('click', (event) => {
+      if (event.target.closest('[data-action="cancel-finding-fix"]') || event.target === dialog) {
+        close();
+        return;
+      }
+      if (event.target.closest('[data-action="apply-finding-fix"]')) {
+        const committed = commitConfig(result.text, {
+          filename: current.filename || 'haproxy.cfg',
+          label: `Fixed: ${finding.title}`,
+          source: 'finding-fix',
+          note: result.applied.map((item) => item.summary).join(' '),
+        });
+        if (!committed.ok) {
+          toast(committed.error?.message || 'Could not save the fixed configuration.', { tone: 'danger' });
+          return;
+        }
+        close();
+        toast('Warning fixed and saved as a new local version. The old version remains in History.', { tone: 'ok' });
+        reloadRoute();
+      }
+    });
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      close();
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    dialog.showModal();
+  };
+
+  view.querySelector('[data-finding-list]')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-fix-finding]');
+    if (!button) return;
+    const finding = analysis.findings[Number(button.dataset.fixFinding)];
+    if (finding) openFindingFix(finding);
+  });
+
   const updateFixCount = () => {
     const count = selectedFixes(view).length;
     const label = view.querySelector('.fix-actions .muted-note');
@@ -323,7 +412,9 @@ export async function renderAnalyze(view, query) {
       </div>
       <ul class="applied-list">${result.applied.map((item) => `<li>${icon('check')}${esc(item.summary)}</li>`).join('')}</ul>
       ${proposedAnalysis.counts.error > analysis.counts.error ? `<div class="callout danger">${icon('warning')}<p>The proposed configuration produces <strong>more errors</strong> than the current one. Review the diff carefully and do not apply it.</p></div>` : ''}
-      ${renderDiff(diff, { compact: true })}
+      <div class="section-head small"><div><span class="eyebrow">Review</span><h3>Old vs new fixed configuration</h3></div><p>Full source before and after the selected fixes.</p></div>
+      ${renderConfigCompare(current.text, result.text)}
+      <details class="fix-details"><summary>Show exact line diff (+${diff.added} / −${diff.removed})</summary>${renderDiff(diff, { compact: true })}</details>
       <div class="fix-apply-row">
         <button class="btn btn-primary" type="button" data-action="apply-fixes">${icon('save')}Apply and save version</button>
         <button class="btn btn-ghost" type="button" data-action="cancel-fixes">Cancel</button>

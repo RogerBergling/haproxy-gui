@@ -70,6 +70,7 @@ def main() -> int:
         "docs/screenshots/topology.png",
         "docs/screenshots/services.png",
         "docs/screenshots/security.png",
+        "docs/screenshots/fix-dialog.png",
     ]:
         require(path)
 

@@ -6,7 +6,9 @@ import { analyzeConfig } from '../public/assets/js/config/analyzer.js';
 import {
   BEST_PRACTICE_FIXES,
   applyBestPracticeFixes,
+  applyFindingFix,
   buildBestPracticeChecklist,
+  canFixFinding,
 } from '../public/assets/js/config/bestpractices.js';
 import { parseConfig } from '../public/assets/js/config/parser.js';
 
@@ -52,6 +54,51 @@ test('adds the HTTP request timeout without overwriting existing timeouts', () =
   assert.equal((result.text.match(/timeout connect/g) || []).length, 1);
   const second = applyBestPracticeFixes(result.text, ['timeouts']);
   assert.equal(second.applied.length, 0);
+});
+
+test('offers a direct fix for the aggregated health-check warning', () => {
+  const model = parseConfig(sampleA);
+  const analysis = analyzeConfig(model);
+  const finding = analysis.findings.find((entry) => entry.id === 'health-checks-not-enabled-multiple');
+  assert.ok(finding);
+  assert.equal(canFixFinding(model, finding), true);
+
+  const result = applyFindingFix(sampleA, finding);
+  assert.ok(result.applied.some((item) => item.id === 'server-checks'));
+  assert.match(result.text, /server ssh 192\.0\.2\.50:443 check inter 2s fall 3 rise 2/);
+  const proposedModel = parseConfig(result.text);
+  const proposedAnalysis = analyzeConfig(proposedModel);
+  assert.ok(!proposedAnalysis.findings.some((entry) => entry.id.startsWith('health-checks-not-enabled')));
+  assert.ok(!proposedAnalysis.findings.some((entry) => entry.id.startsWith('health-no-check')));
+  assert.equal(proposedModel.issues.filter((issue) => issue.severity === 'error').length, 0);
+});
+
+test('does not claim a safe fix for warnings that need an environment decision', () => {
+  const model = parseConfig(sampleB);
+  const analysis = analyzeConfig(model);
+  const manual = analysis.findings.find((entry) => entry.id === 'security-client-cert-unverified-clientcert');
+  assert.ok(manual);
+  assert.equal(canFixFinding(model, manual), false);
+});
+
+test('adds keep-alive timeout and Runtime API timeout through safe fixes', () => {
+  const model = parseConfig(sampleB);
+  const timeoutResult = applyBestPracticeFixes(sampleB, ['timeouts']);
+  assert.match(timeoutResult.text, /timeout http-keep-alive 30s/);
+
+  const statsModel = parseConfig(`global
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+defaults
+    mode http
+frontend fe
+    bind *:80
+    default_backend bk
+backend bk
+    server app 192.0.2.10:80 check
+`);
+  const statsResult = applyBestPracticeFixes(statsModel.text, ['stats-timeout']);
+  assert.equal(statsResult.applied.length, 1);
+  assert.match(statsResult.text, /stats timeout 30s/);
 });
 
 test('builds a checklist with explicit environment-specific items', () => {

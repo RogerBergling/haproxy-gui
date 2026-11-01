@@ -100,6 +100,7 @@ export function applyTimeouts(text, model) {
     (section) => ['frontend', 'backend', 'listen'].includes(section.type) && section.effectiveMode === 'http',
   );
   if (hasHttp && !proxyTimeout('http-request')) needed.push(['http-request', '10s']);
+  if (hasHttp && !proxyTimeout('http-keep-alive')) needed.push(['http-keep-alive', '30s']);
   if (needed.length === 0) return { text, summary: 'Core timeouts already present.' };
 
   const insertion = needed.map(([name, value]) => `\ttimeout ${name} ${value}`);
@@ -166,6 +167,40 @@ export function applyForwardfor(text, model) {
   };
 }
 
+export function applyStatsTimeout(text, model) {
+  const global = globalSection(model);
+  const socket = global?.items.find((item) => item.keyword === 'stats' && item.args[0] === 'socket');
+  if (!socket) return { text, summary: 'No runtime socket to update.' };
+  if (global.items.some((item) => item.keyword === 'stats' && item.args[0] === 'timeout')) {
+    return { text, summary: 'Stats timeout already present.' };
+  }
+  const line = `${indentOf(socket.raw)}stats timeout 30s`;
+  return {
+    text: ensureTrailingNewline(applyEdits(text, [{ type: 'insert', line: socket.line + 1, lines: [line] }])),
+    summary: 'Added stats timeout 30s to the Runtime API socket configuration.',
+  };
+}
+
+export function applyStatsSocketMode(text, model) {
+  const global = globalSection(model);
+  const socket = global?.items.find((item) => item.keyword === 'stats' && item.args[0] === 'socket');
+  if (!socket) return { text, summary: 'No runtime socket to update.' };
+  const args = [...socket.args];
+  const modeIndex = args.indexOf('mode');
+  if (modeIndex >= 0) {
+    if (args[modeIndex + 1] === '660') return { text, summary: 'Runtime socket already uses mode 660.' };
+    args[modeIndex + 1] = '660';
+  } else {
+    const levelIndex = args.indexOf('level');
+    args.splice(levelIndex >= 0 ? levelIndex : args.length, 0, 'mode', '660');
+  }
+  const line = `${indentOf(socket.raw)}stats ${args.join(' ')}`;
+  return {
+    text: ensureTrailingNewline(applyEdits(text, [{ type: 'replace', line: socket.line, text: line }])),
+    summary: 'Set the Runtime API socket to mode 660 so only the owner/group can use it.',
+  };
+}
+
 export const BEST_PRACTICE_FIXES = [
   {
     id: 'tls-baseline',
@@ -181,17 +216,17 @@ export const BEST_PRACTICE_FIXES = [
   {
     id: 'timeouts',
     title: 'Add explicit core timeouts',
-    summary: 'Add missing connect, client, server and HTTP request-header timeouts to defaults.',
+    summary: 'Add missing connect, client, server, HTTP request-header and keep-alive timeouts to defaults.',
     detail:
-      'This fix only fills gaps. It never overwrites an existing timeout. Values are deliberately conservative starting points: connect 5s, client/server 30s, http-request 10s.',
+      'This fix only fills gaps. It never overwrites an existing timeout. Values are deliberately conservative starting points: connect 5s, client/server 30s, http-request 10s, http-keep-alive 30s.',
     risk: 'Low–medium. A 30s server timeout may be too short for long-running generation or streaming endpoints. Review the values before applying.',
     impact: 'Reliability',
     applies: (model) => {
       const defaults = model.defaults[0];
       if (!defaults) return false;
       return ['connect', 'client', 'server'].some((name) => !effectiveTimeout(model, defaults, name))
-        || (model.sections.some((section) => ['frontend', 'backend'].includes(section.type) && section.effectiveMode === 'http')
-          && !effectiveTimeout(model, defaults, 'http-request'));
+        || (model.sections.some((section) => ['frontend', 'backend', 'listen'].includes(section.type) && section.effectiveMode === 'http')
+          && (!effectiveTimeout(model, defaults, 'http-request') || !effectiveTimeout(model, defaults, 'http-keep-alive')));
     },
     apply: applyTimeouts,
   },
@@ -219,7 +254,72 @@ export const BEST_PRACTICE_FIXES = [
     applies: (model) => frontendsMissingForwardfor(model).length > 0,
     apply: applyForwardfor,
   },
+  {
+    id: 'stats-timeout',
+    title: 'Bound the Runtime API socket timeout',
+    summary: 'Add `stats timeout 30s` beside a configured stats socket.',
+    detail:
+      'A runtime client that connects and stalls can hold resources. A bounded timeout keeps the Runtime API responsive without changing traffic routing.',
+    risk: 'Low. Long-running interactive Runtime API sessions may need a higher timeout or reconnects.',
+    impact: 'Operations',
+    applies: (model) => {
+      const global = globalSection(model);
+      return Boolean(global?.items.some((item) => item.keyword === 'stats' && item.args[0] === 'socket')) &&
+        !global.items.some((item) => item.keyword === 'stats' && item.args[0] === 'timeout');
+    },
+    apply: applyStatsTimeout,
+  },
+  {
+    id: 'stats-socket-permissions',
+    title: 'Restrict the Runtime API socket',
+    summary: 'Set the admin stats socket to mode 660.',
+    detail:
+      'The admin socket can change server state and weights. Ensure only the HAProxy owner/group can access it.',
+    risk: 'Low–medium. A monitoring process that previously relied on broader socket permissions may need to join the HAProxy group.',
+    impact: 'Security',
+    applies: (model) => {
+      const global = globalSection(model);
+      const socket = global?.items.find((item) => item.keyword === 'stats' && item.args[0] === 'socket');
+      if (!socket) return false;
+      const modeIndex = socket.args.indexOf('mode');
+      const mode = modeIndex >= 0 ? socket.args[modeIndex + 1] : null;
+      if (!mode) return socket.args.includes('level') && socket.args[socket.args.indexOf('level') + 1] === 'admin';
+      return /^[0-7]{3,4}$/.test(mode) && (Number.parseInt(mode, 8) & 0o007) !== 0;
+    },
+    apply: applyStatsSocketMode,
+  },
 ];
+
+/** Map analyzer finding ids to the safe best-practice fixes that can remediate them. */
+const FINDING_FIX_MAP = [
+  { pattern: /^health-(checks-not-enabled|no-check|mixed-checks)/, ids: ['server-checks'] },
+  {
+    pattern: /^timeouts-(default-(connect|client|server)|frontend-client|backend-(server|connect)|http-request|http-keepalive)/,
+    ids: ['timeouts'],
+  },
+  { pattern: /^tls-(old-min-version|min-version-missing|tickets-enabled)/, ids: ['tls-baseline'] },
+  { pattern: /^routing-no-forwardfor/, ids: ['forwardfor'] },
+  { pattern: /^operations-stats-timeout/, ids: ['stats-timeout'] },
+  { pattern: /^security-stats-socket-(mode|world)/, ids: ['stats-socket-permissions'] },
+];
+
+export function fixIdsForFinding(finding) {
+  if (!finding?.id) return [];
+  return FINDING_FIX_MAP
+    .filter((entry) => entry.pattern.test(finding.id))
+    .flatMap((entry) => entry.ids);
+}
+
+export function canFixFinding(model, finding) {
+  return fixIdsForFinding(finding).some((id) => {
+    const fix = BEST_PRACTICE_FIXES.find((entry) => entry.id === id);
+    return fix ? fix.applies(model) : false;
+  });
+}
+
+export function applyFindingFix(text, finding) {
+  return applyBestPracticeFixes(text, fixIdsForFinding(finding));
+}
 
 export function applyBestPracticeFixes(text, ids) {
   let current = text;

@@ -111,6 +111,7 @@ export function sourceLabel(source) {
     manual: 'Manual save',
     service: 'Service wizard',
     'best-practice': 'Best practice',
+    'finding-fix': 'Warning fix',
     restore: 'Restore',
     revert: 'Restore',
   };

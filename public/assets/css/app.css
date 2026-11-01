@@ -697,6 +697,26 @@ dialog.modal::backdrop { background: rgba(2, 6, 15, .72); backdrop-filter: blur(
 .routing-map .table-scroll { border: 0; border-radius: 0; }
 .routing-map .data-table { font-size: .76rem; }
 .condition-code { white-space: normal; overflow-wrap: anywhere; }
+.config-compare { display: grid; grid-template-columns: 1fr 1fr; gap: .55rem; margin: .7rem 0; }
+.config-pane { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg-soft); min-width: 0; }
+.config-pane.old { border-top: 2px solid var(--line-strong); }
+.config-pane.new { border-top: 2px solid var(--ok); }
+.config-pane-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .35rem .55rem; border-bottom: 1px solid var(--line); font-size: .66rem; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+.config-pane-head small { font-family: var(--mono); font-size: .64rem; text-transform: none; letter-spacing: 0; }
+.config-pane pre { margin: 0; padding: .6rem; max-height: 380px; overflow: auto; font-size: .7rem; line-height: 1.5; white-space: pre; }
+.config-pane code { color: var(--text-soft); }
+.finding-actions { margin-left: auto; display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; }
+.finding-actions .line-link { margin-left: 0; }
+.fix-preview-modal .modal-card { max-width: min(1180px, calc(100vw - 2rem)); }
+.fix-preview-modal .config-pane pre { max-height: 420px; }
+.fix-impact { display: flex; gap: .35rem; flex-wrap: wrap; margin: .5rem 0; }
+.fix-risk { margin-top: .6rem; }
+.fix-details { margin-top: .5rem; }
+.fix-details > summary { font-size: .76rem; color: var(--accent); cursor: pointer; }
+@media (max-width: 760px) {
+  .config-compare { grid-template-columns: 1fr; }
+  .config-pane pre { max-height: 280px; }
+}
 .text-topology { margin-top: .7rem; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .text-topology summary { padding: .55rem .7rem; font-size: .8rem; color: var(--muted); cursor: pointer; }
 .text-topology[open] summary { border-bottom: 1px solid var(--line); }

@@ -180,7 +180,7 @@ Read the full model in the app at **Security & privacy** (`#/security`) or in [t
 
 ### Docker Compose (recommended for users)
 
-The repository includes a ready-to-use [`compose.yaml`](compose.yaml) that pulls the published image, publishes port **8004**, uses a read-only root filesystem and drops capabilities.
+The repository includes a ready-to-use [`compose.yaml`](compose.yaml) that pulls the published image, publishes port **8004**, uses a read-only root filesystem, drops capabilities and includes a scoped Watchtower auto-update service.
 
 ```bash
 curl -O https://raw.githubusercontent.com/RogerBergling/haproxy-gui/main/compose.yaml
@@ -188,6 +188,10 @@ docker compose up -d
 ```
 
 Open **<http://localhost:8004>**.
+
+Watchtower checks for a newer `ghcr.io/rogerbergling/haproxy-gui:latest` image every 300 seconds and only updates the container carrying the matching scope label.
+
+> **Watchtower security note:** mounting `/var/run/docker.sock` gives Watchtower host-level privilege. Remove the `watchtower` service if you do not want automatic updates, or start only the app with `docker compose up -d haproxy-workbench`. The compose file also mounts `${HOME}/.docker/config.json` so Watchtower can pull a private GHCR image; create that file first, or remove the mount when using the public package. The update interval is controlled by the requested `--interval 300` flag.
 
 Pull updates:
 

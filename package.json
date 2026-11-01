@@ -1,0 +1,17 @@
+{
+  "name": "haproxy-workbench",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Browser-only HAProxy configuration workbench: import, explain, analyze, visualize, simulate and safely change HAProxy configs.",
+  "scripts": {
+    "start": "python3 start.py",
+    "test": "node --test",
+    "check": "node scripts/check-js.mjs",
+    "verify": "python3 scripts/verify.py"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,4 +1,5 @@
 import { diagramSummaryRows, nodeDetails, renderDiagramSVG } from '../config/diagram.js';
+import { renderDrawio } from '../config/drawio.js';
 import { parseConfig } from '../config/parser.js';
 import {
   detectArchitecture,
@@ -11,6 +12,7 @@ import {
   icon,
   toast,
 } from '../ui.js';
+import { loadBuildInfo } from '../version.js';
 import { requireConfig } from './common.js';
 
 function collectScenario(model) {
@@ -214,6 +216,7 @@ export async function renderTopology(view, query) {
         </div>
         <div class="diagram-actions">
           <button class="btn btn-ghost btn-sm" type="button" data-action="download-svg">${icon('download')}Download SVG</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="download-drawio">${icon('download')}Download draw.io</button>
         </div>
       </div>
       <div class="topology-scroll" data-topology-scroll>${svg}</div>
@@ -443,6 +446,18 @@ export async function renderTopology(view, query) {
     const serialized = new XMLSerializer().serializeToString(clone);
     downloadText('haproxy-topology.svg', `<?xml version="1.0" encoding="UTF-8"?>\n${serialized}`, 'image/svg+xml;charset=utf-8');
     toast('Topology SVG downloaded.', { tone: 'ok' });
+  });
+
+  view.querySelector('[data-action="download-drawio"]')?.addEventListener('click', async () => {
+    try {
+      const info = await loadBuildInfo();
+      const xml = renderDrawio(model, { version: info.version });
+      downloadText('haproxy-topology.drawio', xml, 'application/xml;charset=utf-8');
+      toast('Editable draw.io topology downloaded.', { tone: 'ok' });
+    } catch (error) {
+      console.error(error);
+      toast('Could not generate the draw.io file.', { tone: 'danger' });
+    }
   });
 
   // Auto-run the default scenario so the page is immediately useful.

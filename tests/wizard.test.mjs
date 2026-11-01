@@ -228,6 +228,124 @@ backend bk
   assert.ok(conflict.errors.some((error) => /already used by existing/i.test(error)));
 });
 
+test('combines service host names with the domain and supports apex and wildcards', () => {
+  const model = parseConfig(sampleB);
+  const plan = buildServicePlan(model, {
+    kind: 'https',
+    name: 'multi',
+    domain: 'example.com',
+    hosts: 'app, api, @, *.apps',
+    server: '192.0.2.99:9000',
+    target: 'frontend:http-https',
+  });
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.form.hosts, [
+    'app.example.com',
+    'api.example.com',
+    'example.com',
+    '*.apps.example.com',
+  ]);
+  assert.match(plan.proposed, /hdr\(host\) -i app\.example\.com/);
+  assert.match(plan.proposed, /hdr\(host\) -i example\.com/);
+  assert.match(plan.proposed, /hdr\(host\) -m end \.apps\.example\.com/);
+  assert.match(plan.proposed, /^# Modified by HAProxy Workbench on /m);
+  assert.match(plan.proposed, /Use at your own risk/);
+
+  const shortOnly = buildServicePlan(model, {
+    kind: 'https',
+    hosts: 'app',
+    server: '192.0.2.99:9000',
+  });
+  assert.equal(shortOnly.ok, false);
+  assert.ok(shortOnly.errors.some((error) => /only a host name/i.test(error)));
+
+  const fqdn = buildServicePlan(model, {
+    kind: 'https',
+    domain: 'example.com',
+    hosts: 'api.example.net',
+    server: '192.0.2.99:9000',
+  });
+  assert.deepEqual(fqdn.form.hosts, ['api.example.net']);
+});
+
+test('follows detected indentation, comment style and section order', () => {
+  const config = `# ============================================================
+# Sample
+# ============================================================
+global
+    log /dev/log local0
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+
+frontend existing
+    bind *:80
+    default_backend bk
+
+backend bk
+    server app 192.0.2.10:80 check
+`;
+  const model = parseConfig(config);
+  const plan = buildServicePlan(model, {
+    kind: 'https',
+    name: 'styled',
+    domain: 'example.com',
+    hosts: 'styled',
+    server: '192.0.2.30:9000',
+    target: 'new',
+    bindAddress: '192.0.2.10',
+    entryPort: '9446',
+    cert: '/etc/haproxy/certs/example.com.pem',
+  });
+  assert.equal(plan.ok, true);
+  assert.match(plan.proposed, /^# ={20,}$/m);
+  assert.match(plan.proposed, /\n {4}bind 192\.0\.2\.10:9446 ssl/);
+  assert.ok(!plan.proposed.includes('\tbind'), 'generated directives should use the detected spaces');
+  const frontendPosition = plan.proposed.indexOf('frontend ft_styled');
+  const backendPosition = plan.proposed.indexOf('backend bk_styled');
+  assert.ok(frontendPosition > -1 && backendPosition > frontendPosition, 'new frontend should be placed before the new backend');
+  assert.ok(frontendPosition < plan.proposed.indexOf('\nbackend bk\n'), 'new frontend should be inserted after the last frontend, before existing backends');
+});
+
+test('inserts a route before the first matching wildcard, not always at the top', () => {
+  const config = `global
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+frontend fe
+    bind *:80
+    use_backend bk_other if { hdr(host) -i other.example.com }
+    use_backend bk_wild if { hdr(host) -m end .example.com }
+    default_backend bk_default
+backend bk_other
+    server app 192.0.2.10:80 check
+backend bk_wild
+    server app 192.0.2.11:80 check
+backend bk_default
+    server app 192.0.2.12:80 check
+`;
+  const model = parseConfig(config);
+  const plan = buildServicePlan(model, {
+    kind: 'http',
+    name: 'targeted',
+    domain: 'example.com',
+    hosts: 'app',
+    server: '192.0.2.40:8080',
+    target: 'frontend:fe',
+  });
+  assert.equal(plan.ok, true);
+  const other = plan.proposed.indexOf('use_backend bk_other');
+  const inserted = plan.proposed.indexOf('use_backend bk_targeted');
+  const wildcard = plan.proposed.indexOf('use_backend bk_wild');
+  const fallback = plan.proposed.indexOf('default_backend bk_default');
+  assert.ok(other < inserted && inserted < wildcard && wildcard < fallback);
+});
+
 test('generated service plan never increases structural errors for the examples', () => {
   for (const [text, forms] of [
     [sampleA, [

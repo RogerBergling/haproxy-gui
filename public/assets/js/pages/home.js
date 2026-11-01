@@ -171,7 +171,7 @@ export async function renderHome(view) {
         <p>Import, understand, inspect, simulate, then export. Every step runs locally and every change can be reverted from the 100-version history.</p>
       </div>
       <div class="feature-grid">
-        <a class="feature-card" href="#/workbench"><span class="feature-icon">${icon('code')}</span><h3>Explain every line</h3><p>Section and directive explanations, effective modes, references and the exact line in context.</p></a>
+        <a class="feature-card" href="#/workbench?tab=learn"><span class="feature-icon">${icon('book')}</span><h3>Learn every config row</h3><p>A guided walkthrough of your own file: section context, directive meaning, effective behaviour and deeper guides.</p></a>
         <a class="feature-card" href="#/analyze"><span class="feature-icon">${icon('shield')}</span><h3>Warnings & best practices</h3><p>TLS policy, timeouts, health checks, header trust, admin-socket permissions and 3.x upgrade risks.</p></a>
         <a class="feature-card" href="#/topology"><span class="feature-icon">${icon('topology')}</span><h3>Graphical topology</h3><p>See frontends, loopback TLS hand-offs, backends and servers as a real routing graph.</p></a>
         <a class="feature-card" href="#/topology?tab=simulate"><span class="feature-icon">${icon('shuffle')}</span><h3>Request simulation</h3><p>Trace Host/SNI ACLs, see the selected server, and test what happens when a server is down.</p></a>
@@ -208,7 +208,7 @@ export async function renderHome(view) {
       <div class="section-head"><div><span class="eyebrow">Limits are explicit</span><h2>An assistant, not a compiler</h2></div></div>
       <div class="callout warn">
         ${icon('warning')}
-        <p><strong>Always validate with the target binary.</strong> This workbench uses a conservative parser and a documented ACL subset. It cannot execute HAProxy, resolve DNS, inspect certificate files, validate Lua or know your application’s semantics. Run <code>haproxy -c -f</code>, test in staging, and keep a rollback path.</p>
+        <p><strong>Use at your own risk.</strong> This workbench uses a conservative parser and a documented ACL subset. It cannot execute HAProxy, resolve DNS, inspect certificate files, validate Lua or know your application’s semantics. Run <code>haproxy -c -f</code>, test in staging, and keep a rollback path.</p>
       </div>
     </section>
   `;

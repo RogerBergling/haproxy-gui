@@ -327,7 +327,7 @@ export async function renderAnalyze(view, query) {
         <ul class="applied-list">${result.applied.map((item) => `<li>${icon('check')}<span><strong>${esc(item.title)}</strong> — ${esc(item.summary)}</span></li>`).join('')}</ul>
         ${errorIncrease ? `<div class="callout danger">${icon('warning')}<p><strong>Do not apply this automatically.</strong> The proposed config contains more errors than the current one. Review the diff and fix it manually.</p></div>` : ''}
         <div class="section-head small"><div><span class="eyebrow">Review</span><h3>Old vs new fixed configuration</h3></div><p>Both versions are shown in full. The old version remains in local history after applying.</p></div>
-        ${renderConfigCompare(current.text, result.text)}
+        ${renderConfigCompare(current.text, result.text, { newLabel: 'New fixed configuration' })}
         <details class="fix-details"><summary>Show exact line diff (+${diff.added} / −${diff.removed})</summary>${renderDiff(diff, { compact: true })}</details>
         ${risks.length ? `<div class="callout warn fix-risk">${icon('warning')}<div><strong>Risk to review</strong><ul>${risks.map((risk) => `<li>${esc(risk)}</li>`).join('')}</ul></div></div>` : ''}
         <div class="modal-actions">
@@ -413,7 +413,7 @@ export async function renderAnalyze(view, query) {
       <ul class="applied-list">${result.applied.map((item) => `<li>${icon('check')}${esc(item.summary)}</li>`).join('')}</ul>
       ${proposedAnalysis.counts.error > analysis.counts.error ? `<div class="callout danger">${icon('warning')}<p>The proposed configuration produces <strong>more errors</strong> than the current one. Review the diff carefully and do not apply it.</p></div>` : ''}
       <div class="section-head small"><div><span class="eyebrow">Review</span><h3>Old vs new fixed configuration</h3></div><p>Full source before and after the selected fixes.</p></div>
-      ${renderConfigCompare(current.text, result.text)}
+      ${renderConfigCompare(current.text, result.text, { newLabel: 'New fixed configuration' })}
       <details class="fix-details"><summary>Show exact line diff (+${diff.added} / −${diff.removed})</summary>${renderDiff(diff, { compact: true })}</details>
       <div class="fix-apply-row">
         <button class="btn btn-primary" type="button" data-action="apply-fixes">${icon('save')}Apply and save version</button>

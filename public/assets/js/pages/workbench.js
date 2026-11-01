@@ -135,6 +135,124 @@ function sectionCard(section, model) {
   </article>`;
 }
 
+function learnContext(item, section, model) {
+  if (item.keyword === 'bind' && item.binds) {
+    return item.binds.map((bind) => {
+      const tls = bind.ssl ? `TLS terminates here${bind.cert ? ` with ${bind.cert}` : ''}` : 'TLS is not terminated here (plain TCP or passthrough)';
+      return `Opens ${bind.raw}; ${tls}.`;
+    }).join(' ');
+  }
+  if (item.keyword === 'mode') {
+    const mode = section.effectiveMode === 'http' ? 'HTTP' : 'TCP';
+    return `This section runs in ${mode} mode${section.mode ? '' : ' (inherited from defaults)'}. ${mode === 'HTTP' ? 'HAProxy can inspect headers, paths and cookies.' : 'HAProxy forwards an opaque byte stream.'}`;
+  }
+  if (item.keyword === 'server' && item.server) {
+    return `Defines upstream server "${item.server.name}" at ${item.server.address}. Active health checks are ${item.server.flags.has('check') ? 'enabled' : 'not enabled'}; upstream TLS is ${item.server.flags.has('ssl') ? 'enabled' : 'not enabled'}.`;
+  }
+  if (item.keyword === 'use_backend') {
+    return `When ${item.condition ? 'its condition matches' : 'reached'}, this rule sends traffic to backend "${item.backend}". Rules are evaluated in order.`;
+  }
+  if (item.keyword === 'default_backend') {
+    return `This is the fallback backend "${item.backend}" when no use_backend rule matches.`;
+  }
+  if (item.keyword === 'acl') {
+    return `Defines the named condition "${item.acl?.name}" using ${item.acl?.criterion}. Other rules can reference it by name.`;
+  }
+  if (item.keyword === 'timeout') {
+    return `Sets the ${item.timeoutName} timer to ${item.timeoutValue} in this section unless a narrower override applies.`;
+  }
+  if (item.keyword === 'balance') {
+    return `Chooses the "${item.algorithm}" algorithm for selecting servers in this backend.`;
+  }
+  if (item.keyword === 'http-request' || item.keyword === 'http-response' || item.keyword === 'tcp-request' || item.keyword === 'tcp-response') {
+    return `Runs the "${item.action}" ${item.keyword.split('-')[0].toUpperCase()}-level action${item.condition ? ' only when its condition matches' : ' for all traffic'}.`;
+  }
+  if (item.keyword === 'log') {
+    return 'Sends HAProxy log messages to the configured destination. Logging is for humans and external collectors; it does not change routing.';
+  }
+  if (item.keyword === 'stats' && item.args[0] === 'socket') {
+    return 'Creates the Runtime API/admin socket. Treat this as a live control interface, not just a monitoring URL.';
+  }
+  if (item.keyword === 'ssl-default-bind-options' || item.keyword === 'ssl-default-bind-ciphers' || item.keyword === 'ssl-default-bind-ciphersuites') {
+    return 'Sets a process-wide default inherited by TLS binds unless an individual bind overrides it.';
+  }
+  if (item.keyword === 'option') {
+    return `Enables the "${item.value}" behaviour for this section (or inherited defaults). It changes how HAProxy treats connections, HTTP, health checks or logging.`;
+  }
+  return `This line belongs to the ${section.type} section and is executed by HAProxy as part of that section’s behaviour.`;
+}
+
+function learningRow(item, section, model) {
+  const explanation = explainItem(item);
+  const context = learnContext(item, section, model);
+  const syntax = explanation.syntax ? `<div class="learn-syntax"><span>Syntax</span><code>${escape(explanation.syntax)}</code></div>` : '';
+  const tips = explanation.tips?.length
+    ? `<div class="learn-tip-block"><h4>Why it matters</h4><ul>${explanation.tips.map((tip) => `<li>${escape(tip)}</li>`).join('')}</ul></div>`
+    : '';
+  const seeAlso = explanation.seeAlso?.length
+    ? `<div class="explain-links">${explanation.seeAlso.map((slug) => `<a href="#/learn/${encodeURIComponent(slug)}">Learn: ${escape(slug.replace(/-/g, ' '))} ${icon('arrow')}</a>`).join('')}</div>`
+    : '';
+  return `<article class="learn-row" data-learn-line="${item.line}" data-learning-search="${escape(`${item.keyword} ${item.args.join(' ')} ${explanation.summary} ${context} ${section.type} ${section.name}`.toLowerCase())}">
+    <span class="learn-line-no">${item.line}</span>
+    <div class="learn-row-main">
+      <div class="learn-row-head">
+        <code class="directive-code"><span class="kw">${escape(item.keyword)}</span> ${escape(prettyArgs(item))}</code>
+        <button class="btn btn-ghost btn-xs" type="button" data-learn-jump="${item.line}">Go to source</button>
+      </div>
+      <p class="learn-context">${escape(context)}</p>
+      <p class="learn-summary"><strong>What it does:</strong> ${escape(explanation.summary)}</p>
+      ${item.comment ? `<p class="learn-comment"># ${escape(item.comment)}</p>` : ''}
+      <details class="learn-detail">
+        <summary>Explain this line</summary>
+        <p>${escape(explanation.detail)}</p>
+        ${syntax}
+        ${tips}
+        ${seeAlso}
+      </details>
+    </div>
+  </article>`;
+}
+
+function learningHTML(model, filter = '') {
+  const query = filter.trim().toLowerCase();
+  const sections = model.sections.map((section) => {
+    const guide = sectionGuide(section.type);
+    const rows = section.items.filter((item) =>
+      !query || `${item.keyword} ${item.args.join(' ')} ${item.comment} ${section.type} ${section.name}`.toLowerCase().includes(query),
+    );
+    if (rows.length === 0 && !section.items.some((item) => !query)) return null;
+    if (rows.length === 0 && query) return null;
+    return `<section class="learn-config-section">
+      <header class="learn-section-head">
+        <div class="learn-section-title"><span class="section-type">${escape(section.type)}</span><h2>${escape(section.name || (section.type === 'global' ? 'process-wide' : section.type === 'defaults' ? 'defaults' : '(unnamed)'))}</h2><span class="section-lines">lines ${section.line}–${section.endLine}</span></div>
+        ${guide ? `<p>${escape(guide.summary)}</p>` : ''}
+        <div class="section-meta">
+          ${section.effectiveMode && ['frontend','backend','listen'].includes(section.type) ? `<span class="pill tiny">${section.effectiveMode.toUpperCase()}</span>` : ''}
+          ${section.binds.length ? `<span class="pill tiny">${section.binds.length} bind${section.binds.length === 1 ? '' : 's'}</span>` : ''}
+          ${section.servers.length ? `<span class="pill tiny">${section.servers.length} server${section.servers.length === 1 ? '' : 's'}</span>` : ''}
+        </div>
+        ${guide ? `<details class="learn-section-guide"><summary>Why this section exists and what to watch out for</summary>
+          <p>${escape(guide.purpose)}</p>
+          <div class="guide-columns"><div><h4>Key points</h4><ul>${guide.keyPoints.map((point) => `<li>${escape(point)}</li>`).join('')}</ul></div><div><h4>Common mistakes</h4><ul>${guide.commonMistakes.map((point) => `<li>${escape(point)}</li>`).join('')}</ul></div></div>
+        </details>` : ''}
+      </header>
+      <div class="learn-rows">${rows.length ? rows.map((item) => learningRow(item, section, model)).join('') : '<p class="muted">No matching directives in this section.</p>'}</div>
+    </section>`;
+  }).filter(Boolean);
+
+  return `<div class="learn-config-intro">
+    <div><span class="eyebrow">Learning mode</span><h2>Every row, explained in context</h2><p>This is a guided walkthrough of the imported file, not just an editor. Each directive is tied to its section, its effective behaviour and the reason it matters. Comments are shown on the directive they annotate.</p></div>
+    <div class="learn-config-stats"><div><strong>${model.stats.sections}</strong><span>sections</span></div><div><strong>${model.stats.sections ? model.sections.reduce((sum, section) => sum + section.items.length, 0) : 0}</strong><span>explained rows</span></div><div><strong>${model.stats.servers}</strong><span>servers</span></div></div>
+  </div>
+  <div class="structure-toolbar">
+    <label class="search-field">${icon('search')}<input type="search" placeholder="Find a directive, section or behaviour…" data-learning-search value="${escape(filter)}" aria-label="Search the config walkthrough"></label>
+    <a class="btn btn-ghost btn-sm" href="#/glossary">${icon('book')}Glossary</a>
+    <a class="btn btn-ghost btn-sm" href="#/learn">${icon('book')}Learning articles</a>
+  </div>
+  <div class="learn-config-list" data-learning-list>${sections.length ? sections.join('') : `<div class="empty-filter">${icon('search')}No config row matches “${escape(filter)}”.</div>`}</div>
+  <div class="callout info">${icon('info')}<p><strong>Learning, not executing.</strong> Explanations describe the imported text and the target HAProxy 3.x semantics. Unknown directives are preserved and marked generically. Always confirm exact behavior with <code>haproxy -c</code> and the manual for your deployed branch.</p></div>`;
+}
+
 function structureHTML(model, query = '') {
   const normalized = query.trim().toLowerCase();
   const sections = normalized
@@ -190,7 +308,8 @@ export async function renderWorkbench(view, param, query) {
   const initialModel = parseConfig(current.text);
   const initialAnalysis = analyzeConfig(initialModel);
   const history = getHistory();
-  const requestedTab = query.get('tab') === 'structure' ? 'structure' : 'source';
+  const requestedTabParam = query.get('tab');
+  const requestedTab = ['structure', 'learn'].includes(requestedTabParam) ? requestedTabParam : 'source';
   const requestedLine = Number(query.get('line') || 0);
   const filename = current.filename || 'haproxy.cfg';
 
@@ -206,7 +325,7 @@ export async function renderWorkbench(view, param, query) {
           <span class="pill">saved ${escape(formatRelative(current.updatedAt))}</span>
           <span class="pill">${history.length}/100 versions</span>
         </div>
-        <p class="page-lede">Edit the source, inspect the structure, and jump from any directive to a deep explanation. Saving creates a local version you can inspect or restore.</p>
+        <p class="page-lede">Edit the source, inspect the structure, or switch to the guided walkthrough that explains every directive in this file. Saving creates a local version you can inspect or restore.</p>
       </div>
       <div class="page-actions wrap">
         <button class="btn btn-ghost" type="button" data-action="import">${icon('upload')}Import</button>
@@ -220,7 +339,8 @@ export async function renderWorkbench(view, param, query) {
     <section class="workbench-shell">
       <div class="tabbar" role="tablist" aria-label="Workbench views">
         <button class="tab" type="button" role="tab" data-tab="source" aria-selected="${requestedTab === 'source'}">${icon('code')}Source</button>
-        <button class="tab" type="button" role="tab" data-tab="structure" aria-selected="${requestedTab === 'structure'}">${icon('layers')}Structure & explanations</button>
+        <button class="tab" type="button" role="tab" data-tab="structure" aria-selected="${requestedTab === 'structure'}">${icon('layers')}Structure</button>
+        <button class="tab" type="button" role="tab" data-tab="learn" aria-selected="${requestedTab === 'learn'}">${icon('book')}Learn this config</button>
         <div class="tabbar-status" data-dirty-status><span class="save-dot"></span><span data-dirty-label>Saved</span></div>
       </div>
 
@@ -257,6 +377,10 @@ export async function renderWorkbench(view, param, query) {
         </div>
         <div data-structure-body>${structureHTML(initialModel)}</div>
       </div>
+
+      <div class="tab-panel" data-panel="learn" ${requestedTab === 'learn' ? '' : 'hidden'}>
+        <div data-learning-body></div>
+      </div>
     </section>
 
     <section class="workbench-next">
@@ -273,6 +397,7 @@ export async function renderWorkbench(view, param, query) {
   const dirtyLabel = view.querySelector('[data-dirty-label]');
   const validationPanel = view.querySelector('[data-validation-panel]');
   const structureBody = view.querySelector('[data-structure-body]');
+  const learningBody = view.querySelector('[data-learning-body]');
   const searchInput = view.querySelector('[data-structure-search]');
   const saveButton = view.querySelector('#save-version');
   let savedText = current.text;
@@ -335,6 +460,31 @@ export async function renderWorkbench(view, param, query) {
     syncScroll();
   };
 
+  const bindLearning = () => {
+    learningBody.querySelectorAll('[data-learn-jump]').forEach((button) => {
+      button.addEventListener('click', () => scrollToLine(Number(button.dataset.learnJump)));
+    });
+    const learningSearch = learningBody.querySelector('[data-learning-search]');
+    learningSearch?.addEventListener('input', () => {
+      const query = learningSearch.value.trim().toLowerCase();
+      learningBody.querySelectorAll('.learn-row').forEach((row) => {
+        row.hidden = Boolean(query) && !row.dataset.learningSearch.includes(query);
+      });
+      learningBody.querySelectorAll('.learn-config-section').forEach((section) => {
+        section.hidden = ![...section.querySelectorAll('.learn-row')].some((row) => !row.hidden);
+      });
+    });
+  };
+
+  const renderLearning = () => {
+    const model = parseConfig(textarea.value);
+    learningBody.innerHTML = learningHTML(model);
+    bindLearning();
+    const params = new URLSearchParams(location.hash.split('?')[1] || '');
+    params.set('tab', 'learn');
+    window.history.replaceState(null, '', `#/workbench?${params.toString()}`);
+  };
+
   const activateTab = (tab) => {
     view.querySelectorAll('[data-tab]').forEach((button) => {
       button.setAttribute('aria-selected', button.dataset.tab === tab ? 'true' : 'false');
@@ -344,6 +494,9 @@ export async function renderWorkbench(view, param, query) {
     });
     if (tab === 'structure') {
       renderStructure(searchInput.value);
+    }
+    if (tab === 'learn') {
+      renderLearning();
     }
   };
 
@@ -534,6 +687,8 @@ export async function renderWorkbench(view, param, query) {
     setTimeout(() => scrollToLine(requestedLine), 60);
   } else if (requestedTab === 'structure') {
     renderStructure();
+  } else if (requestedTab === 'learn') {
+    renderLearning();
   }
 
   return () => {

@@ -17,6 +17,7 @@ import {
   formatBytes,
   formatRelative,
   icon,
+  renderConfigCompare,
   renderDiff,
   toast,
 } from '../ui.js';
@@ -91,6 +92,26 @@ export async function renderHistory(view) {
       </div>
     </section>
 
+    <section class="version-compare-panel">
+      <div class="section-head small">
+        <div><span class="eyebrow">Any two versions</span><h2>Compare configuration versions</h2></div>
+        <p>Select any two snapshots or the current file. Both full sources and the exact line diff are shown.</p>
+      </div>
+      <div class="version-selectors">
+        <label class="field"><span>Version A (old)</span><select data-compare-a>
+          <option value="current">Current configuration</option>
+          ${history.map((entry) => `<option value="${esc(entry.id)}">${esc(entry.label)} · ${esc(formatDate(entry.at))}</option>`).join('')}
+        </select></label>
+        <button class="btn btn-ghost btn-sm" type="button" data-action="swap-versions" title="Swap versions">⇄ Swap</button>
+        <label class="field"><span>Version B (new)</span><select data-compare-b>
+          <option value="current">Current configuration</option>
+          ${history.map((entry) => `<option value="${esc(entry.id)}">${esc(entry.label)} · ${esc(formatDate(entry.at))}</option>`).join('')}
+        </select></label>
+        <button class="btn btn-primary btn-sm" type="button" data-action="compare-versions">${icon('code')}Compare versions</button>
+      </div>
+      <div class="version-compare-result" data-version-compare></div>
+    </section>
+
     <div class="section-head">
       <div><span class="eyebrow">Timeline</span><h2>Saved versions</h2></div>
       <p>Newest first. A restore creates a new snapshot, so no version disappears unexpectedly. When the cap is reached, the oldest snapshot is dropped.</p>
@@ -104,7 +125,47 @@ export async function renderHistory(view) {
   `;
 
   const diffPanel = view.querySelector('[data-history-diff]');
+  const compareA = view.querySelector('[data-compare-a]');
+  const compareB = view.querySelector('[data-compare-b]');
+  const compareOutput = view.querySelector('[data-version-compare]');
   let selectedId = null;
+
+  const versionText = (value) => value === 'current'
+    ? { text: current.text, label: 'Current configuration', when: current.updatedAt }
+    : (() => {
+      const entry = history.find((item) => item.id === value);
+      return entry
+        ? { text: entry.text, label: entry.label || 'Snapshot', when: entry.at }
+        : null;
+    })();
+
+  const renderVersionCompare = () => {
+    if (!compareOutput || !compareA || !compareB) return;
+    const oldVersion = versionText(compareA.value);
+    const newVersion = versionText(compareB.value);
+    if (!oldVersion || !newVersion) return;
+    const diff = diffLines(oldVersion.text, newVersion.text);
+    compareOutput.innerHTML = `
+      <div class="version-compare-head">
+        <div><span class="eyebrow">${diff.changed ? `${diff.added} added · ${diff.removed} removed` : 'No differences'}</span><h3>${esc(oldVersion.label)} <span class="version-arrow">→</span> ${esc(newVersion.label)}</h3></div>
+        <span class="pill ${diff.changed ? 'accent' : 'ok'}">${diff.changed ? `${diff.added + diff.removed} changed lines` : 'Identical'}</span>
+      </div>
+      ${renderConfigCompare(oldVersion.text, newVersion.text, { oldLabel: oldVersion.label, newLabel: newVersion.label })}
+      <details class="fix-details"><summary>Show exact line diff</summary>${renderDiff(diff, { compact: true })}</details>`;
+  };
+
+  const previousVersion = history.find((entry) => entry.text !== current.text);
+  if (previousVersion) compareB.value = previousVersion.id;
+  renderVersionCompare();
+  compareA?.addEventListener('change', renderVersionCompare);
+  compareB?.addEventListener('change', renderVersionCompare);
+  view.querySelector('[data-action="compare-versions"]')?.addEventListener('click', renderVersionCompare);
+  view.querySelector('[data-action="swap-versions"]')?.addEventListener('click', () => {
+    const old = compareA.value;
+    compareA.value = compareB.value;
+    compareB.value = old;
+    renderVersionCompare();
+  });
 
   const showDiff = (id) => {
     const entry = history.find((item) => item.id === id);

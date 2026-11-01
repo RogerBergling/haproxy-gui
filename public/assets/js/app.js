@@ -13,6 +13,7 @@ const TITLES = {
   workbench: 'Workbench · HAProxy Workbench',
   analyze: 'Analyze · HAProxy Workbench',
   topology: 'Topology & simulation · HAProxy Workbench',
+  compare: 'Compare files · HAProxy Workbench',
   services: 'Add service · HAProxy Workbench',
   history: 'History · HAProxy Workbench',
   learn: 'Learn · HAProxy Workbench',
@@ -38,6 +39,7 @@ function setNav(page) {
     workbench: 'workbench',
     analyze: 'analyze',
     topology: 'topology',
+    compare: 'compare',
     services: 'services',
     history: 'history',
     learn: 'learn',
@@ -71,6 +73,10 @@ async function loadPage(page, param, query) {
     case 'topology': {
       const { renderTopology } = await import('./pages/topology.js');
       return renderTopology(view, query);
+    }
+    case 'compare': {
+      const { renderCompare } = await import('./pages/compare.js');
+      return renderCompare(view, query);
     }
     case 'services': {
       const { renderServices } = await import('./pages/services.js');

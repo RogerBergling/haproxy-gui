@@ -7,9 +7,11 @@
  * proposed configuration. Nothing is applied until the caller saves it.
  */
 
-import { applyEdits, appendBlock, ensureTrailingNewline } from './edit.js';
+import { stampWorkbenchChange } from './change.js';
+import { applyEdits, ensureTrailingNewline } from './edit.js';
 import { findBackend, isLoopbackHost, parseConfig } from './parser.js';
 import { evaluateCondition } from './simulate.js';
+import { detectConfigStyle, describeStyle, resourceComment, routeComment, styleLines } from './style.js';
 
 export const SERVICE_KINDS = [
   {
@@ -82,6 +84,47 @@ function validateHosts(hosts) {
     }
   }
   return errors;
+}
+
+function normalizeDomain(value) {
+  return String(value || '').trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+}
+
+/**
+ * A service entry can be a short host ("app"), a wildcard ("*.apps"), an apex
+ * marker ("@"), or a fully qualified name. Short names receive the entered
+ * domain so generated ACLs never use a bare host name by accident.
+ */
+function resolveHosts(entries, domain, errors) {
+  const resolved = [];
+  if (domain && (!HOST_RE.test(domain) || domain.startsWith('*.') || domain.includes('://') || domain.includes('/'))) {
+    errors.push(`"${domain}" is not a valid domain. Use a DNS domain such as example.com.`);
+  }
+  for (const entry of entries) {
+    let host = entry;
+    if (host === '@') {
+      if (!domain) {
+        errors.push('Use @ for the apex domain only after entering a domain.');
+        continue;
+      }
+      host = domain;
+    } else {
+      const wildcard = host.startsWith('*.');
+      const bare = wildcard ? host.slice(2) : host;
+      const isIp = IPV4_RE.test(bare);
+      if (!isIp && !bare.includes('.')) {
+        if (!domain) {
+          errors.push(`"${entry}" is only a host name. Enter a domain or use a fully qualified hostname.`);
+          continue;
+        }
+        host = `${wildcard ? '*.' : ''}${bare}.${domain}`;
+      } else if (wildcard && !bare.includes('.') && domain) {
+        host = `*.${bare}.${domain}`;
+      }
+    }
+    resolved.push(host);
+  }
+  return [...new Set(resolved)];
 }
 
 function parseAddress(value, defaultPort) {
@@ -266,11 +309,53 @@ function routingInsertionLine(frontend) {
   return frontend.endLine + 1;
 }
 
+/**
+ * Insert before the first existing rule that would match one of the new hosts,
+ * otherwise immediately before default_backend. This preserves the existing
+ * grouping/order as much as possible while still guaranteeing precedence.
+ */
+function safeRoutingInsertionLine(frontend, hosts, criterion) {
+  let earliestRule = null;
+  for (const host of hosts) {
+    const match = hostRoutedTo(frontend, host, '', criterion);
+    if (match?.rule?.line) {
+      earliestRule = earliestRule === null ? match.rule.line : Math.min(earliestRule, match.rule.line);
+    }
+  }
+  if (earliestRule !== null) return earliestRule;
+  const defaultBackend = frontend.items.find((item) => item.keyword === 'default_backend');
+  if (defaultBackend) return defaultBackend.line;
+  return frontend.endLine + 1;
+}
+
+function insertionAfterLastSection(model, types, fallbackTypes) {
+  const sections = model.sections.filter((section) => types.includes(section.type));
+  if (sections.length > 0) return sections[sections.length - 1].endLine + 1;
+  const fallback = model.sections.filter((section) => fallbackTypes.includes(section.type));
+  if (fallback.length > 0) return fallback[fallback.length - 1].endLine + 1;
+  return model.lines.length + (model.text.endsWith('\n') ? 0 : 1);
+}
+
+function frontendInsertionLine(model) {
+  return insertionAfterLastSection(model, ['frontend', 'listen'], ['global', 'defaults']);
+}
+
+function backendInsertionLine(model) {
+  return insertionAfterLastSection(model, ['backend', 'listen'], ['frontend']);
+}
+
 function routeLine(backend, host, criterion) {
   if (host.startsWith('*.')) {
-    return `\tuse_backend ${backend} if { ${criterion} -m end ${host.slice(1)} }`;
+    return `use_backend ${backend} if { ${criterion} -m end ${host.slice(1)} }`;
   }
-  return `\tuse_backend ${backend} if { ${criterion} -i ${host} }`;
+  return `use_backend ${backend} if { ${criterion} -i ${host} }`;
+}
+
+function routeBlock(style, hosts, backend, criterion) {
+  return [
+    ...routeComment(style, hosts, backend).map((line) => `${style.indent}${line}`),
+    ...styleLines(style, hosts.map((host) => routeLine(backend, host, criterion))),
+  ];
 }
 
 function portInUse(model, port) {
@@ -350,14 +435,22 @@ function hostRoutedTo(frontend, host, backendName, criterion) {
 
 function normalizeForm(form, model) {
   const kind = SERVICE_KINDS.some((entry) => entry.id === form.kind) ? form.kind : 'https';
-  const hosts = parseHosts(form.hosts);
-  const errors = [...validateHosts(hosts)];
-  if (hosts.length === 0) errors.push('Enter at least one hostname.');
-  if (hosts.length > 20) errors.push('Add at most 20 hostnames at a time.');
+  const domain = normalizeDomain(form.domain);
+  const entries = parseHosts(form.hosts);
+  const errors = [];
+  if (entries.length === 0) errors.push('Enter at least one hostname.');
+  if (entries.length > 20) errors.push('Add at most 20 hostnames at a time.');
+  const hosts = resolveHosts(entries, domain, errors);
+  errors.push(...validateHosts(hosts));
   const defaultPort = kind === 'http' ? 80 : 443;
   const server = parseAddress(form.server, defaultPort);
   if (server.error) errors.push(server.error);
-  const name = sanitizeName(form.name || hosts[0]?.replace(/^\*\./, '').split('.')[0] || 'service');
+  const name = sanitizeName(
+    form.name ||
+    hosts[0]?.replace(/^\*\./, '').split('.')[0] ||
+    domain.split('.')[0] ||
+    'service',
+  );
   const entryPort = String(form.entryPort || (kind === 'http' ? 80 : 443));
   if (!/^\d+$/.test(entryPort) || Number(entryPort) < 1 || Number(entryPort) > 65535) {
     errors.push('Entry port must be between 1 and 65535.');
@@ -368,6 +461,7 @@ function normalizeForm(form, model) {
   return {
     kind,
     hosts,
+    domain,
     name,
     server,
     entryPort,
@@ -391,6 +485,7 @@ function normalizeForm(form, model) {
 export function buildServicePlan(model, form) {
   const input = normalizeForm(form, model);
   const kind = SERVICE_KINDS.find((entry) => entry.id === input.kind);
+  const style = detectConfigStyle(model);
   const candidates = candidateList(model, input.kind);
   const forceNewFrontend = input.target === 'new';
   let target = forceNewFrontend ? null : findTarget(candidates, input.target);
@@ -415,9 +510,13 @@ export function buildServicePlan(model, form) {
   const routeFrontend = target ? target.frontend : null;
   const newFrontend = forceNewFrontend || !target;
   const newFrontendName = newFrontend ? uniqueName(`ft_${input.name}`, existingNames, '') : null;
-  const cert = input.cert || `/etc/haproxy/certs/${input.name}.pem`;
+  const cert = input.cert || `/etc/haproxy/certs/${input.domain || input.name}.pem`;
   const bindHost = formatBindHost(input.bindAddress);
   const bind = `${bindHost}:${input.entryPort}`;
+  const serverFlags = [input.check ? 'check inter 2s fall 3 rise 2' : '', input.serverSsl ? 'ssl' : '']
+    .filter(Boolean)
+    .join(' ');
+  const serverAddress = input.server.address || '192.0.2.1:1';
   const edits = [];
   const additions = [];
 
@@ -433,29 +532,46 @@ export function buildServicePlan(model, form) {
     if (input.kind === 'https' && !input.cert) {
       warnings.push(`No certificate path was supplied; the proposal uses the placeholder ${cert}. Replace it with a real certificate path before deploying.`);
     }
-    const lines = [`# Added by HAProxy Workbench: ${input.name}`];
-    lines.push(`frontend ${newFrontendName}`);
-    if (input.kind === 'https') {
-      lines.push(`\tbind ${bind} ssl crt ${cert}`);
-      lines.push('\tmode http');
-      lines.push('\toption httplog');
-      lines.push('\toption forwardfor');
-      lines.push('\thttp-request set-header X-Forwarded-Proto https');
-    } else if (input.kind === 'http') {
-      lines.push(`\tbind ${bind}`);
-      lines.push('\tmode http');
-      lines.push('\toption httplog');
-      lines.push('\toption forwardfor');
-    } else {
-      lines.push(`\tbind ${bind}`);
-      lines.push('\tmode tcp');
-    }
-    lines.push(`\tdefault_backend ${backendName}`);
-    additions.push(...lines);
+    const directives = input.kind === 'https'
+      ? [
+        `bind ${bind} ssl crt ${cert}`,
+        'mode http',
+        'option httplog',
+        'option forwardfor',
+        'http-request set-header X-Forwarded-Proto https',
+        `default_backend ${backendName}`,
+      ]
+      : input.kind === 'http'
+        ? [
+          `bind ${bind}`,
+          'mode http',
+          'option httplog',
+          'option forwardfor',
+          `default_backend ${backendName}`,
+        ]
+        : [
+          `bind ${bind}`,
+          'mode tcp',
+          `default_backend ${backendName}`,
+        ];
+    const frontendLines = [
+      '',
+      ...resourceComment(style, `Frontend: ${newFrontendName}`, [
+        `Service: ${input.hosts.join(', ')}`,
+        `Listen: ${bind}`,
+        `Mode: ${input.kind === 'tcp' ? 'TCP' : 'HTTP'}${input.kind === 'https' ? ' with TLS termination' : ''}`,
+        `Upstream: ${serverAddress}`,
+        'Managed by HAProxy Workbench',
+      ]),
+      `frontend ${newFrontendName}`,
+      ...styleLines(style, directives.map((line) => `\t${line}`)),
+      '',
+    ];
+    edits.push({ type: 'insert', line: frontendInsertionLine(model), lines: frontendLines });
+    additions.push(...frontendLines);
   } else if (routeFrontend) {
     const criterion = input.kind === 'tcp' ? 'req_ssl_sni' : 'hdr(host)';
     const internalRoute = target.kind === 'bridge';
-    const routeLines = input.hosts.map((host) => routeLine(backendName, host, criterion));
 
     if (target.kind === 'bridge') {
       const existingEdge = hostRoutedTo(target.edgeFrontend, input.hosts[0], target.bridgeBackend.name, 'req_ssl_sni');
@@ -464,13 +580,13 @@ export function buildServicePlan(model, form) {
         return match?.backend === target.bridgeBackend.name;
       });
       if (!coveredByBridge) {
-        const edgeLines = input.hosts.map((host) => routeLine(target.bridgeBackend.name, host, 'req_ssl_sni'));
+        const edgeBlock = routeBlock(style, input.hosts, target.bridgeBackend.name, 'req_ssl_sni');
         edits.push({
           type: 'insert',
-          line: routingInsertionLine(target.edgeFrontend),
-          lines: edgeLines,
+          line: safeRoutingInsertionLine(target.edgeFrontend, input.hosts, 'req_ssl_sni'),
+          lines: edgeBlock,
         });
-        additions.push(...edgeLines);
+        additions.push(...edgeBlock);
         if (existingEdge) {
           warnings.push(
             `An existing rule on ${target.edgeFrontend.name} would have matched ${input.hosts[0]} (${existingEdge.backend}). The new, more specific SNI rules are inserted above it so this service takes precedence.`,
@@ -500,7 +616,7 @@ export function buildServicePlan(model, form) {
       const existing = hostRoutedTo(routeFrontend, input.hosts[0], backendName, criterion);
       if (existing) {
         warnings.push(
-          `${routeFrontend.name} already routes ${input.hosts[0]} to ${existing.backend}. The new rule is inserted above it and will take precedence.`,
+          `${routeFrontend.name} already routes ${input.hosts[0]} to ${existing.backend}. The new rule is inserted above the first matching rule and will take precedence.`,
         );
       }
       if (input.hosts.some((host) => host.startsWith('*.'))) {
@@ -508,12 +624,13 @@ export function buildServicePlan(model, form) {
       }
     }
 
+    const finalRouteBlock = routeBlock(style, input.hosts, backendName, criterion);
     edits.push({
       type: 'insert',
-      line: routingInsertionLine(routeFrontend),
-      lines: routeLines,
+      line: safeRoutingInsertionLine(routeFrontend, input.hosts, criterion),
+      lines: finalRouteBlock,
     });
-    additions.push(...routeLines);
+    additions.push(...finalRouteBlock);
 
     if (input.kind === 'https') {
       warnings.push(
@@ -522,45 +639,30 @@ export function buildServicePlan(model, form) {
     }
   }
 
-  const backendLines = [`# Added by HAProxy Workbench: ${input.name}`, `backend ${backendName}`];
-  backendLines.push(`\tmode ${input.kind === 'tcp' ? 'tcp' : 'http'}`);
-  backendLines.push(`\tbalance ${input.balance}`);
-  const serverFlags = [input.check ? 'check inter 2s fall 3 rise 2' : '', input.serverSsl ? 'ssl' : '']
-    .filter(Boolean)
-    .join(' ');
-  const serverAddress = input.server.address || '192.0.2.1:1';
-  backendLines.push(`\tserver ${serverName} ${serverAddress}${serverFlags ? ` ${serverFlags}` : ''}`);
-  additions.push('', ...backendLines);
+  const backendDirectives = [
+    `mode ${input.kind === 'tcp' ? 'tcp' : 'http'}`,
+    `balance ${input.balance}`,
+    `server ${serverName} ${serverAddress}${serverFlags ? ` ${serverFlags}` : ''}`,
+  ];
+  const backendBlock = [
+    '',
+    ...resourceComment(style, `Backend: ${backendName}`, [
+      `Service: ${input.hosts.join(', ')}`,
+      `Upstream: ${serverAddress}`,
+      `Mode: ${input.kind === 'tcp' ? 'TCP' : 'HTTP'}`,
+      'Managed by HAProxy Workbench',
+    ]),
+    `backend ${backendName}`,
+    ...styleLines(style, backendDirectives.map((line) => `\t${line}`)),
+  ];
+  edits.push({ type: 'insert', line: backendInsertionLine(model), lines: backendBlock });
+  additions.push(...backendBlock);
 
-  let proposed = applyEdits(model.text, edits);
-  proposed = appendBlock(proposed, backendLines);
-
-  if (newFrontend) {
-    // Rebuild the whole new block so the order is always frontend first and
-    // backend second, regardless of route edits above.
-    const block = [];
-    block.push(`# Added by HAProxy Workbench: ${input.name}`);
-    block.push(`frontend ${newFrontendName}`);
-    if (input.kind === 'https') {
-      block.push(`\tbind ${bind} ssl crt ${cert}`);
-      block.push('\tmode http');
-      block.push('\toption httplog');
-      block.push('\toption forwardfor');
-      block.push('\thttp-request set-header X-Forwarded-Proto https');
-    } else if (input.kind === 'http') {
-      block.push(`\tbind ${bind}`);
-      block.push('\tmode http');
-      block.push('\toption httplog');
-      block.push('\toption forwardfor');
-    } else {
-      block.push(`\tbind ${bind}`);
-      block.push('\tmode tcp');
-    }
-    block.push(`\tdefault_backend ${backendName}`);
-    block.push('');
-    block.push(...backendLines);
-    proposed = appendBlock(model.text, block);
-  }
+  let proposed = ensureTrailingNewline(applyEdits(model.text, edits));
+  proposed = stampWorkbenchChange(
+    proposed,
+    `Added ${kind.label} service ${input.hosts.join(', ')} -> ${serverAddress}`,
+  );
 
   if (input.server.warning) warnings.push(input.server.warning);
   if (input.check) {
@@ -617,6 +719,11 @@ export function buildServicePlan(model, form) {
     newFrontend,
     newFrontendName,
     bind: { address: bindHost, port: input.entryPort, raw: bind },
+    style,
+    styleLabel: describeStyle(style),
+    placementLabel: newFrontend
+      ? 'New frontend after the last frontend; backend after the last backend; comments follow the detected style.'
+      : 'Route inserted before the first matching rule/default; backend after the last backend; comments follow the detected style.',
     proposed: ensureTrailingNewline(proposed),
     additions,
     request,

@@ -171,16 +171,18 @@ export function downloadJson(filename, value) {
   downloadText(filename, `${JSON.stringify(value, null, 2)}\n`, 'application/json;charset=utf-8');
 }
 
-export function renderConfigCompare(oldText, newText) {
+export function renderConfigCompare(oldText, newText, options = {}) {
   const oldLines = String(oldText ?? '').replace(/\r\n?/g, '\n').split('\n');
   const newLines = String(newText ?? '').replace(/\r\n?/g, '\n').split('\n');
-  return `<div class="config-compare" role="region" aria-label="Old and new configuration">
+  const oldLabel = options.oldLabel || 'Old configuration';
+  const newLabel = options.newLabel || 'New configuration';
+  return `<div class="config-compare" role="region" aria-label="${esc(oldLabel)} and ${esc(newLabel)}">
     <section class="config-pane old">
-      <div class="config-pane-head"><span>Old configuration</span><small>${oldLines.length} lines</small></div>
+      <div class="config-pane-head"><span>${esc(oldLabel)}</span><small>${oldLines.length} lines</small></div>
       <pre><code>${esc(oldText)}</code></pre>
     </section>
     <section class="config-pane new">
-      <div class="config-pane-head"><span>New fixed configuration</span><small>${newLines.length} lines</small></div>
+      <div class="config-pane-head"><span>${esc(newLabel)}</span><small>${newLines.length} lines</small></div>
       <pre><code>${esc(newText)}</code></pre>
     </section>
   </div>`;
@@ -259,7 +261,7 @@ function validConfigSize(text) {
   return null;
 }
 
-async function readConfigFile(file) {
+export async function readConfigFile(file) {
   if (!file) return { error: 'No file selected.' };
   if (file.size > CONFIG_LIMIT_BYTES) {
     return { error: `“${file.name}” is ${formatBytes(file.size)}; the local limit is ${formatBytes(CONFIG_LIMIT_BYTES)}.` };

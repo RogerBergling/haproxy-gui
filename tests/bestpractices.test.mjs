@@ -45,6 +45,16 @@ test('does not add inherited forwardfor twice in sample B', () => {
   assert.equal(forward.applies(model), false, 'defaults already contains option forwardfor');
 });
 
+test('stamps generated fixes with tool, UTC date/time, action and risk notice', () => {
+  const model = parseConfig(sampleA);
+  const analysis = analyzeConfig(model);
+  const finding = analysis.findings.find((entry) => entry.id === 'health-checks-not-enabled-multiple');
+  const result = applyFindingFix(sampleA, finding);
+  assert.match(result.text, /^# Modified by HAProxy Workbench on \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z: Fixed warning:/);
+  assert.match(result.text, /Use at your own risk/);
+  assert.equal((result.text.match(/# Modified by HAProxy Workbench on /g) || []).length, 1);
+});
+
 test('adds the HTTP request timeout without overwriting existing timeouts', () => {
   const model = parseConfig(sampleB);
   const result = applyBestPracticeFixes(sampleB, ['timeouts']);

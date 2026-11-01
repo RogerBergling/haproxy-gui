@@ -14,6 +14,8 @@ Import → parse → explain → analyze → visualize → simulate → add a se
 
 The published container is a static file server. All parsing, analysis, topology rendering, request simulation, service planning and version history happen in your browser. There is no account system, database, upload endpoint, analytics script or third-party request. The configuration never leaves the browser.
 
+> **MIT licensed. Use at your own risk.** This is an independent tool, not official HAProxy software. Generated changes are annotated with the tool name, UTC date/time and action. Always review the old/new configuration and validate with `haproxy -c -f` against the exact production binary before deployment. No warranty is provided.
+
 ---
 
 ## Screenshots
@@ -26,13 +28,15 @@ The published container is a static file server. All parsing, analysis, topology
 |---|---|
 | ![Analysis](docs/screenshots/analyze.png) | ![Topology](docs/screenshots/topology.png) |
 
-| Service wizard | Security model |
+| Service wizard | Learning mode |
 |---|---|
-| ![Service wizard](docs/screenshots/services.png) | ![Security](docs/screenshots/security.png) |
+| ![Service wizard](docs/screenshots/services.png) | ![Learning mode](docs/screenshots/learning.png) |
 
-| Warning fix with old/new config review |
-|---|
-| ![Warning fix](docs/screenshots/fix-dialog.png) |
+| Compare files | Warning fix with old/new config review |
+|---|---|
+| ![Compare files](docs/screenshots/compare.png) | ![Warning fix](docs/screenshots/fix-dialog.png) |
+
+![Security model](docs/screenshots/security.png)
 
 All screenshots use the included anonymised example configurations.
 
@@ -52,12 +56,18 @@ The first page shows the application **version, build/image, commit, build time 
 - Structural parsing of `global`, `defaults`, `frontend`, `backend`, `listen`, `resolvers`, `peers`, `cache`, `ring`, `http-errors`, `mailers`, `program`, `fcgi-app`, `userlist`, `log-forward`, `crt-store`, `acme`, `traces` and other HAProxy sections.
 - Unknown directives are preserved, never silently deleted. The tool does not pretend to be `haproxy -c`.
 
-### Learn while you work
+### Compare files
 
-- A workbench **Structure & explanations** view with section guides, effective mode display, bind details, server/check state and a deep explanation for every common directive.
-- A 10-article learning library: config mental model, TLS architectures, ACL/routing order, health checks and balancing, timeouts/logging, security checklist, performance, operations, version upgrades and troubleshooting.
+The dedicated **Compare** page loads two independent HAProxy files by picker, drag-and-drop or paste. It shows both complete configurations, the exact line diff, line counts, analyzer scores/error/warning counts and a clear changed/identical summary. Neither file is uploaded or saved to the server.
+
+### Learn every row in your own config
+
+- A **Learn this config** tab walks through every directive in the imported file, section by section. Each row shows its line number, the exact directive, what it does, its effective context, why it matters, syntax and links into the deeper guides.
+- The Workbench **Structure** view remains available for quick technical inspection: section guides, effective modes, bind details and server/check state.
+- A 10-article learning library covers the config mental model, TLS architectures, ACL/routing order, health checks and balancing, timeouts/logging, security, performance, operations, version upgrades and troubleshooting.
 - A searchable **glossary** of 58 HAProxy terms with aliases and operator context.
 - An **HAProxy versions** guide covering 2.6, 2.8, 3.0, 3.2, 3.3 and 3.4, including what changed, support/EOL context, breaking changes and a practical 2.x → 3.x upgrade checklist.
+- The Learning page links directly to the row-by-row walkthrough for the currently loaded config.
 
 ### Analyze, warn and harden
 
@@ -88,7 +98,8 @@ The health-check warning in the examples — “Health-check options are set but
 
 - An SVG topology of clients → entry frontends → loopback TLS hand-offs → backends → servers.
 - Clickable nodes with bind, rule and server details.
-- Exact routing conditions in a separate table; download the graph as SVG.
+- Exact routing conditions in a separate table.
+- Download the graph as **SVG** or as an editable **draw.io / diagrams.net** file with named nodes, route labels, dashed TLS hand-offs and a generated timestamp/risk note.
 - A request simulator for HTTPS, HTTP and TLS/TCP passthrough. It traces:
   - the selected entry frontend and bind
   - request-level `http-request` returns/denies
@@ -104,10 +115,12 @@ The health-check warning in the examples — “Health-check options are set but
 The guided wizard asks for the full network shape rather than hiding it:
 
 1. **Service type** — HTTPS website with TLS termination, HTTP/www website, or TLS passthrough by SNI
-2. **Service name and hostnames**
-3. **Where it listens** — auto-detected target, an explicit existing frontend/bridge, or **create a new frontend** with explicit listen IP/interface, listen port and certificate path
+2. **Service identity** — service name, **DNS domain**, and hostnames. Short names are combined with the domain (`app` → `app.example.com`); `@` means the apex and `*.apps` wildcards are supported.
+3. **Where it listens** — auto-detected target, an explicit existing frontend/bridge, or **create a new frontend** with explicit listen IP/interface, listen port and certificate path. Drag the new-service card onto a target or click the target.
 4. **Where traffic goes** — separate upstream IP/hostname and upstream port, upstream TLS, health check and balancing
-5. **Review** — diff, resolved listen/upstream values, current-vs-proposed simulation and warnings
+5. **Review** — diff, resolved listen/upstream values, style/placement explanation, current-vs-proposed routing and an interactive simulator that runs requests against the complete proposed file
+
+Generated edits follow the detected config design: indentation style, boxed or simple comments, new frontend after the last frontend, new backend after the last backend, and routes inserted before the first matching wildcard/rule or default backend. Each generated change is written back into the config with a replaceable marker containing **HAProxy Workbench, UTC date/time, action and a use-at-your-own-risk notice**.
 
 It inspects the running configuration and can place a new HTTPS host behind an existing TCP/SNI edge and loopback TLS terminator, add a direct route to an existing TLS frontend, reuse an existing HTTP/HTTPS listener, or generate a completely new frontend and backend. It generates the backend and routing rule, then shows:
 
@@ -121,7 +134,8 @@ It inspects the running configuration and can place a new HTTPS host behind an e
 
 - Every import, manual save, service generation, best-practice apply and restore creates a local snapshot.
 - Up to 100 versions, bounded by localStorage size.
-- Compare any version with the current config, download a snapshot, export all history as JSON, or restore in one click.
+- Compare **any two versions** — current vs snapshot or snapshot vs snapshot — with both complete configs and the exact line diff.
+- Compare a version with the current config, download a snapshot, export all history as JSON, or restore in one click.
 - Restores create a new snapshot, so a rollback can itself be inspected or undone.
 - Clear history or all local data at any time.
 
@@ -216,9 +230,10 @@ Open the site through the server, not as a `file://` URL, because ES modules and
 2. Import a config, paste it, or open one of the two anonymised examples.
 3. Inspect the **Workbench** source and structure.
 4. Open **Analyze** for findings and best-practice fixes.
-5. Open **Topology** to see the graph and simulate a request.
-6. Use **Add service** to preview a new HTTPS/HTTP/SNI route.
-7. Export or download from **History** whenever you need a backup.
+5. Open **Topology** to see the graph and simulate a request. Download it as SVG or draw.io.
+6. Use **Add service**, including the domain, listen IP/port and drag-and-drop placement, to preview a new HTTPS/HTTP/SNI route and simulate the complete proposed file.
+7. Use **Compare** to compare two independent files, or **History** to compare any two saved versions.
+8. Export or download from **History** whenever you need a backup.
 
 ---
 
@@ -307,9 +322,12 @@ public/
       parser.js                # structural HAProxy parser
       analyzer.js              # explainable findings and scoring
       simulate.js              # request/ACL/simulation engine
-      wizard.js                # service placement and config proposal
-      bestpractices.js         # opt-in fixes and checklist
+      wizard.js                # service placement, domain resolution and config proposal
+      bestpractices.js         # opt-in fixes, per-warning fixes and checklist
+      style.js                 # indentation/comment/section-order detection
+      change.js                # dated change marker in generated configs
       diagram.js               # SVG topology
+      drawio.js                # editable draw.io topology export
       diff.js                  # line diff
       edit.js                  # anchored text edits
     data/
@@ -318,8 +336,8 @@ public/
       learn.js                 # long-form articles
       glossary.js              # 58 terms
       versions.js              # branch and upgrade guidance
-    pages/                     # home, workbench, analyze, topology, services,
-                               # history, learn, versions, glossary, security
+    pages/                     # home, workbench, analyze, topology, compare,
+                               # services, history, learn, versions, glossary, security
 scripts/                       # verification and smoke tests
 tests/                         # Node test runner suites
 .github/workflows/             # CI + multi-arch GHCR publishing
@@ -364,8 +382,8 @@ The static handler supports `GET`/`HEAD`, blocks directory indexes and keeps res
 
 ---
 
-## License
+## License and risk
 
-MIT. See [LICENSE](LICENSE).
+MIT licensed — see [LICENSE](LICENSE). **Use at your own risk.** Generated configurations and automated fixes are provided without warranty. Configurations are annotated with the tool name, UTC date/time and action when the app creates or modifies them. You remain responsible for review, validation with the target HAProxy binary, staging tests and production rollback.
 
 HAProxy is a registered trademark of HAProxy Technologies. This project is unofficial and is not affiliated with or endorsed by HAProxy Technologies. The analyzer and guide complement, but never replace, the official configuration manual and `haproxy -c`.

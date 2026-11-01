@@ -1,6 +1,7 @@
 import { ARTICLES, articleIndex, getArticle } from '../data/learn.js';
 import { GLOSSARY } from '../data/glossary.js';
 import { REVIEWED_AT } from '../data/versions.js';
+import { getCurrent } from '../storage.js';
 import { copyText, esc, formatDate, icon, toast } from '../ui.js';
 
 function inline(text) {
@@ -50,6 +51,7 @@ function articleCard(article, index) {
 
 function learnIndexHTML() {
   const list = articleIndex();
+  const current = getCurrent();
   const topics = [...new Set(ARTICLES.flatMap((article) => article.tags))].slice(0, 12);
   return `
     <header class="page-head learn-head">
@@ -64,6 +66,16 @@ function learnIndexHTML() {
         <div class="reference-card"><span class="eyebrow">Reference</span><h3>Admin glossary</h3><p>${GLOSSARY.length} terms from SNI and stick tables to 421, OCSP, ALPN and PROXY protocol.</p><a class="btn btn-ghost btn-sm" href="#/glossary">${icon('book')}Browse terms</a></div>
       </div>
     </header>
+
+    ${current ? `<section class="learn-config-cta">
+      <div class="learn-config-cta-icon">${icon('code')}</div>
+      <div><span class="eyebrow">Your imported configuration</span><h2>Learn every row in <code>${esc(current.filename || 'haproxy.cfg')}</code></h2><p>Open the line-by-line walkthrough. It explains each directive in its section, what it does, why it matters and where to find the deeper guide.</p></div>
+      <a class="btn btn-primary" href="#/workbench?tab=learn">${icon('book')}Explain my config</a>
+    </section>` : `<section class="learn-config-cta">
+      <div class="learn-config-cta-icon">${icon('book')}</div>
+      <div><span class="eyebrow">Hands-on learning</span><h2>Import a config, then learn every row</h2><p>The Workbench includes a line-by-line walkthrough of your own configuration, not just generic examples.</p></div>
+      <a class="btn btn-ghost" href="#/">Import a config</a>
+    </section>`}
 
     <div class="learn-filter">
       <label class="search-field">${icon('search')}<input type="search" placeholder="Search articles and topics…" data-article-filter aria-label="Search articles"></label>

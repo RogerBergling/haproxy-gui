@@ -49,6 +49,66 @@ function resultBadge(result) {
   return { label: `HTTP ${result.code}`, tone, text: result.summary };
 }
 
+function bindProposedSim(container, plan) {
+  if (!container) return;
+  const proposedModel = parseConfig(plan.proposed);
+  const request = plan.request;
+  container.innerHTML = `
+    <form class="proposed-sim-form" data-proposed-sim-form>
+      <label class="field"><span>Scheme</span><select name="scheme">
+        <option value="https" ${request.scheme === 'https' ? 'selected' : ''}>HTTPS</option>
+        <option value="http" ${request.scheme === 'http' ? 'selected' : ''}>HTTP</option>
+        <option value="tcp" ${request.scheme === 'tcp' ? 'selected' : ''}>TCP / TLS</option>
+      </select></label>
+      <label class="field"><span>Host</span><input name="host" value="${esc(request.host)}" autocomplete="off"></label>
+      <label class="field"><span>SNI</span><input name="sni" value="${esc(request.sni || request.host)}" autocomplete="off"></label>
+      <label class="field"><span>Port</span><input name="port" value="${esc(request.port)}" inputmode="numeric" autocomplete="off"></label>
+      <label class="field"><span>Path</span><input name="path" value="${esc(request.path || '/')}" autocomplete="off"></label>
+      <label class="field"><span>Source</span><input name="source" value="203.0.113.10" autocomplete="off"></label>
+      <button class="btn btn-primary btn-sm" type="submit">${icon('shuffle')}Run against new file</button>
+    </form>
+    <div class="proposed-sim-output" data-proposed-sim-output></div>`;
+
+  const form = container.querySelector('[data-proposed-sim-form]');
+  const output = container.querySelector('[data-proposed-sim-output]');
+  const run = () => {
+    const input = {
+      scheme: form.elements.scheme.value,
+      host: form.elements.host.value.trim(),
+      sni: form.elements.sni.value.trim() || form.elements.host.value.trim(),
+      port: form.elements.port.value.trim(),
+      path: form.elements.path.value || '/',
+      method: 'GET',
+      source: form.elements.source.value.trim() || '203.0.113.10',
+      clientCert: false,
+    };
+    const result = simulateRequest(proposedModel, input);
+    const badge = resultBadge(result);
+    const route = [
+      result.frontend ? `frontend ${result.frontend}` : null,
+      result.backend ? `backend ${result.backend}` : null,
+      result.server ? `server ${typeof result.server === 'string' ? result.server : result.server.name}` : null,
+    ].filter(Boolean);
+    output.innerHTML = `<div class="sim-result ${badge.tone}" data-proposed-sim-result>
+      <div class="sim-result-head">
+        <div class="sim-status"><span class="status-orb ${badge.tone}"></span><div><span class="eyebrow">New file result</span><h3>${esc(badge.label)}</h3></div></div>
+        <span class="pill ${badge.tone}">${esc(result.outcome)}</span>
+      </div>
+      <p class="sim-summary">${esc(result.summary)}</p>
+      ${route.length ? `<div class="route-line">${route.map((item, index) => `${index ? `<span class="route-arrow">${icon('arrow')}</span>` : ''}<span class="route-node">${esc(item)}</span>`).join('')}</div>` : ''}
+      ${result.warnings.length ? `<div class="callout warn">${icon('warning')}<div><strong>Simulation warnings</strong><ul>${result.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div></div>` : ''}
+      <details class="proposed-trace" open><summary>Decision trace (${result.steps.length} steps)</summary>
+        <ol class="timeline">${result.steps.map((step) => `<li class="timeline-item ${step.level || 'info'}"><span class="timeline-dot"></span><div class="timeline-copy"><div class="timeline-title"><strong>${esc(step.title)}</strong>${step.line ? `<a class="line-link" href="#/workbench?line=${step.line}">line ${step.line}</a>` : ''}</div><p>${esc(step.detail)}</p></div></li>`).join('')}</ol>
+      </details>
+    </div>`;
+  };
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    run();
+  });
+  run();
+}
+
 function simulationCompareHTML(currentResult, proposedResult) {
   const currentBadge = resultBadge(currentResult);
   const proposedBadge = resultBadge(proposedResult);
@@ -124,12 +184,20 @@ export async function renderServices(view, query) {
         <div class="section-head small"><div><span class="eyebrow">Step 2</span><h2>Service name and hostnames</h2></div></div>
         <div class="form-grid">
           <label class="field"><span>Service name</span><input name="name" placeholder="myapp" autocomplete="off" title="Letters, digits, underscores and hyphens; unsafe characters are normalised"></label>
-          <label class="field span-2"><span>Hostnames</span><textarea name="hosts" rows="2" placeholder="app.example.com, api.example.com" autocomplete="off"></textarea><small>One or more hostnames, separated by spaces or commas. Wildcards such as *.example.com are supported.</small></label>
+          <label class="field"><span>Domain</span><input name="domain" placeholder="example.com" autocomplete="off"><small>Used to complete short host names. Fully qualified host names are used as-is.</small></label>
+          <label class="field span-2"><span>Hostnames</span><textarea name="hosts" rows="2" placeholder="app, api, @, *.apps" autocomplete="off"></textarea><small>Short names are appended to the domain (<code>app</code> → <code>app.example.com</code>). Use <code>@</code> for the apex and <code>*.apps</code> for a wildcard.</small></label>
         </div>
 
         <div class="section-head small"><div><span class="eyebrow">Step 3</span><h2>Where should it listen?</h2></div></div>
         <div class="form-grid">
           <label class="field span-2"><span>Placement</span><select name="target" data-target-select>${targetOptions(model, 'https', 'auto')}</select><small>Choose an existing TLS/HTTP frontend, an SNI edge → loopback termination bridge, or explicitly create a new frontend.</small></label>
+        </div>
+        <div class="placement-planner">
+          <div class="draggable-service" draggable="true" data-drag-service tabindex="0" role="button" aria-label="Drag the new service onto a placement target">
+            <span class="drag-grip" aria-hidden="true">⠿</span>
+            <div><strong data-drag-service-label>New service</strong><small>Drag onto a target below, or click a target.</small></div>
+          </div>
+          <div class="placement-targets" data-placement-targets aria-label="Placement targets"></div>
         </div>
         <div class="target-hint" data-target-hint></div>
         <fieldset class="form-section new-frontend-fields" data-new-frontend-fields>
@@ -179,6 +247,8 @@ export async function renderServices(view, query) {
   const preview = view.querySelector('[data-service-preview]');
   const targetSelect = form.elements.target;
   const targetHint = view.querySelector('[data-target-hint]');
+  const placementTargets = view.querySelector('[data-placement-targets]');
+  const dragService = view.querySelector('[data-drag-service]');
   const newFrontendFields = view.querySelector('[data-new-frontend-fields]');
   const certField = view.querySelector('.cert-field');
   const stale = view.querySelector('[data-preview-stale]');
@@ -197,6 +267,46 @@ export async function renderServices(view, query) {
   };
 
   const candidatesForCurrentKind = () => serviceCandidates(model, currentKind);
+
+  const renderPlacementTargets = () => {
+    if (!placementTargets) return;
+    const candidates = candidatesForCurrentKind();
+    const targets = [
+      {
+        id: 'auto',
+        label: 'Auto-detect',
+        meta: candidates[0]?.label || 'Create a new frontend',
+        detail: 'Recommended',
+      },
+      ...candidates.map((candidate) => ({
+        id: candidate.id,
+        label: candidate.label,
+        meta: candidate.frontend?.binds?.map((bind) => bind.raw).join(', ') || 'existing binds',
+        detail: candidate.kind === 'bridge' ? 'SNI bridge' : candidate.frontend?.effectiveMode?.toUpperCase() || 'frontend',
+      })),
+      {
+        id: 'new',
+        label: 'Create a new frontend',
+        meta: `${form.elements.bindAddress.value || '*'}:${form.elements.entryPort.value || '—'}`,
+        detail: 'Dedicated listener',
+      },
+    ];
+    placementTargets.innerHTML = targets.map((target) => `
+      <button class="placement-target ${targetSelect.value === target.id ? 'selected' : ''}" type="button" data-placement-target="${esc(target.id)}" aria-pressed="${targetSelect.value === target.id}">
+        <span class="placement-target-type">${esc(target.detail)}</span>
+        <strong>${esc(target.label)}</strong>
+        <small>${esc(target.meta)}</small>
+      </button>`).join('');
+  };
+
+  const choosePlacement = (id) => {
+    if (![...targetSelect.options].some((option) => option.value === id)) return;
+    targetSelect.value = id;
+    updateTargetHint();
+    updateNewFrontendFields();
+    renderPlacementTargets();
+    markStale();
+  };
 
   const willCreateNewFrontend = () => {
     if (targetSelect.value === 'new') return true;
@@ -238,6 +348,7 @@ export async function renderServices(view, query) {
       </div>`;
     }
     updateNewFrontendFields();
+    renderPlacementTargets();
   };
 
   const rebuildTargets = () => {
@@ -252,6 +363,7 @@ export async function renderServices(view, query) {
     lastServerPortDefault = defaultPort;
     updateTargetHint();
     updateNewFrontendFields();
+    renderPlacementTargets();
     markStale();
   };
 
@@ -281,11 +393,48 @@ export async function renderServices(view, query) {
   targetSelect.addEventListener('change', () => {
     updateTargetHint();
     updateNewFrontendFields();
+    renderPlacementTargets();
   });
   [form.elements.bindAddress, form.elements.entryPort].forEach((input) => {
     input?.addEventListener('input', () => {
       if (willCreateNewFrontend()) updateTargetHint();
+      renderPlacementTargets();
     });
+  });
+  [form.elements.name, form.elements.hosts].forEach((input) => {
+    input?.addEventListener('input', () => {
+      const label = view.querySelector('[data-drag-service-label]');
+      if (label) label.textContent = form.elements.name.value.trim() || form.elements.hosts.value.trim().split(/[\s,]+/)[0] || 'New service';
+    });
+  });
+
+  dragService?.addEventListener('dragstart', (event) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', 'haproxy-workbench-service');
+    dragService.classList.add('dragging');
+  });
+  dragService?.addEventListener('dragend', () => dragService.classList.remove('dragging'));
+  placementTargets?.addEventListener('click', (event) => {
+    const target = event.target.closest('[data-placement-target]');
+    if (target) choosePlacement(target.dataset.placementTarget);
+  });
+  placementTargets?.addEventListener('dragover', (event) => {
+    const target = event.target.closest('[data-placement-target]');
+    if (!target) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    target.classList.add('drag-over');
+  });
+  placementTargets?.addEventListener('dragleave', (event) => {
+    event.target.closest('[data-placement-target]')?.classList.remove('drag-over');
+  });
+  placementTargets?.addEventListener('drop', (event) => {
+    const target = event.target.closest('[data-placement-target]');
+    if (!target) return;
+    event.preventDefault();
+    target.classList.remove('drag-over');
+    choosePlacement(target.dataset.placementTarget);
+    toast(`Placement set to ${target.querySelector('strong')?.textContent || target.dataset.placementTarget}.`, { tone: 'ok' });
   });
   form.elements.serverSsl.addEventListener('change', () => {
     // A common upstream TLS convention; do not overwrite a custom port.
@@ -300,6 +449,7 @@ export async function renderServices(view, query) {
   const formValues = () => ({
     kind: form.querySelector('input[name="kind"]:checked')?.value || 'https',
     name: form.elements.name.value,
+    domain: form.elements.domain.value,
     hosts: form.elements.hosts.value,
     server: buildServerAddress(),
     balance: form.elements.balance.value,
@@ -351,6 +501,7 @@ export async function renderServices(view, query) {
         <span><strong>Upstream</strong>${esc(plan.form.server.address || '—')}</span>
         <span><strong>Mode</strong>${plan.kind === 'tcp' ? 'TCP / SNI' : plan.kind === 'https' ? 'HTTP + TLS termination' : 'HTTP'}</span>
         <span><strong>Upstream TLS</strong>${plan.form.serverSsl ? 'yes' : 'no'}</span>
+        <span><strong>Config style</strong>${esc(plan.styleLabel)}</span>
       </div>
 
       ${plan.errors.length ? `<div class="callout danger">${icon('error')}<div><strong>Fix these before applying</strong><ul>${plan.errors.map((error) => `<li>${esc(error)}</li>`).join('')}</ul></div></div>` : ''}
@@ -365,13 +516,18 @@ export async function renderServices(view, query) {
 
       <div class="section-head small"><div><span class="eyebrow">Before / after</span><h3>Simulated request</h3></div><p>Uses <code>${esc(plan.request.scheme.toUpperCase())} ${esc(plan.request.host)}${esc(plan.request.path || '')}</code> against the current and proposed configurations.</p></div>
       ${simulationCompareHTML(currentResult, proposedResult)}
+      <div class="design-note">${icon('code')}<span><strong>Design-aware output:</strong> ${esc(plan.styleLabel)}. ${esc(plan.placementLabel)}</span></div>
 
-      <div class="section-head small"><div><span class="eyebrow">Generated diff</span><h3>What will be written</h3></div><p>The new backend is appended; routing rules are inserted before existing rules so this service takes precedence.</p></div>
+      <div class="section-head small"><div><span class="eyebrow">New file simulation</span><h3>Simulate the new configuration</h3></div><p>This runs against the full proposed file, not just the current routing table. Change the request and run it as many times as you like.</p></div>
+      <div class="proposed-sim" data-proposed-sim></div>
+
+      <div class="section-head small"><div><span class="eyebrow">Generated diff</span><h3>What will be written</h3></div><p>The new backend is added after existing backends; routing rules are inserted before the first matching rule or default backend.</p></div>
       ${renderDiff(diff, { compact: true })}
       <div class="preview-foot">
         <span class="muted-note">${icon('lock')}Nothing has been applied yet. The current version remains in local history.</span>
         <button class="btn btn-primary" type="button" data-action="apply-service" ${plan.ok ? '' : 'disabled'}>${icon('save')}Apply and save version</button>
       </div>`;
+    bindProposedSim(preview.querySelector('[data-proposed-sim]'), plan);
     preview.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 

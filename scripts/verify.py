@@ -48,6 +48,7 @@ def main() -> int:
         ".dockerignore",
         "start.py",
         "public/index.html",
+        "public/LICENSE.txt",
         "public/version.json",
         "public/assets/css/app.css",
         "public/assets/js/app.js",
@@ -56,6 +57,10 @@ def main() -> int:
         "public/assets/js/config/simulate.js",
         "public/assets/js/config/wizard.js",
         "public/assets/js/config/bestpractices.js",
+        "public/assets/js/config/style.js",
+        "public/assets/js/config/change.js",
+        "public/assets/js/config/drawio.js",
+        "public/assets/js/pages/compare.js",
         "public/assets/js/data/samples.js",
         "public/assets/js/data/learn.js",
         "public/assets/js/data/glossary.js",
@@ -71,6 +76,8 @@ def main() -> int:
         "docs/screenshots/services.png",
         "docs/screenshots/security.png",
         "docs/screenshots/fix-dialog.png",
+        "docs/screenshots/learning.png",
+        "docs/screenshots/compare.png",
     ]:
         require(path)
 

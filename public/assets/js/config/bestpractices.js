@@ -6,14 +6,14 @@
  * certificate paths) is exposed as a checklist rather than silently changed.
  */
 
+import { stampWorkbenchChange } from './change.js';
 import {
   applyEdits,
-  appendBlock,
   ensureTrailingNewline,
   indentOf,
   routeInsertionLine,
 } from './edit.js';
-import { parseConfig, effectiveTimeout, timeoutToMs } from './parser.js';
+import { parseConfig, effectiveTimeout } from './parser.js';
 
 const STRONG_MIN = new Set(['TLSv1.2', 'TLSv1.3']);
 
@@ -318,10 +318,12 @@ export function canFixFinding(model, finding) {
 }
 
 export function applyFindingFix(text, finding) {
-  return applyBestPracticeFixes(text, fixIdsForFinding(finding));
+  return applyBestPracticeFixes(text, fixIdsForFinding(finding), {
+    action: finding?.title ? `Fixed warning: ${finding.title}` : 'Fixed analyzer finding',
+  });
 }
 
-export function applyBestPracticeFixes(text, ids) {
+export function applyBestPracticeFixes(text, ids, options = {}) {
   let current = text;
   const applied = [];
   let model = parseConfig(current);
@@ -333,6 +335,12 @@ export function applyBestPracticeFixes(text, ids) {
     current = result.text;
     applied.push({ id, title: fix.title, summary: result.summary });
     model = parseConfig(current);
+  }
+  if (applied.length > 0) {
+    current = stampWorkbenchChange(
+      current,
+      options.action || `Applied ${applied.map((item) => item.title).join(', ')}`,
+    );
   }
   return { text: current, applied };
 }

@@ -7,6 +7,11 @@ name: haproxy-workbench
 # The image is published at ghcr.io/rogerbergling/haproxy-gui:latest.
 # Nothing is persisted in the container: configurations and history live in
 # the browser's localStorage. See the in-app Security & privacy page.
+#
+# This deployment intentionally does not include Watchtower or mount the
+# Docker socket. Update deliberately:
+#   docker compose pull
+#   docker compose up -d --force-recreate
 
 services:
   haproxy-workbench:
@@ -26,27 +31,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-      - "com.centurylinklabs.watchtower.scope=haproxy-gui"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8080/', timeout=2).read()"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
-
-  # Auto-update the application image every 5 minutes when a newer image is
-  # available. Watchtower mounts the Docker socket, which is host-level
-  # privilege. Remove this service if you do not want automatic updates.
-  watchtower:
-    image: containrrr/watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${HOME}/.docker/config.json:/config.json:ro
-    environment:
-      - DOCKER_API_VERSION=1.44
-    labels:
-      - "com.centurylinklabs.watchtower.scope=haproxy-gui"
-    command: --interval 300 --label-enable --scope haproxy-gui --cleanup

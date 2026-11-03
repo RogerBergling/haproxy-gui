@@ -148,10 +148,9 @@ def main() -> int:
     check("no-new-privileges:true" in compose, "compose must set no-new-privileges")
     check("cap_drop:" in compose, "compose must drop Linux capabilities")
     check("8004:8080" in compose, "compose must publish the documented port")
-    check("containrrr/watchtower" in compose, "compose must include Watchtower")
-    check("com.centurylinklabs.watchtower.enable=true" in compose, "app must opt in to Watchtower label updates")
-    check("com.centurylinklabs.watchtower.scope=haproxy-gui" in compose, "Watchtower scope label is missing")
-    check("DOCKER_API_VERSION=1.44" in compose, "Watchtower Docker API version is missing")
+    check("watchtower:" not in compose.lower(), "compose must not include Watchtower")
+    check("/var/run/docker.sock" not in compose, "compose must not mount the Docker socket")
+    check("DOCKER_API_VERSION" not in compose, "compose must not pin a Watchtower Docker API version")
 
     publish = read(ROOT / ".github/workflows/docker-publish.yml")
     check("ghcr.io" in publish, "publish workflow must target GHCR")

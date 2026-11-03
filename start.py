@@ -55,6 +55,13 @@ SECURITY_HEADERS = {
 class Handler(http.server.SimpleHTTPRequestHandler):
     """Static handler with strict routing, containment and no directory listing."""
 
+    server_version = "HAProxyWorkbench"
+    sys_version = ""
+
+    def version_string(self) -> str:
+        """Do not advertise the Python runtime or stdlib server version."""
+        return self.server_version
+
     extensions_map = {
         **http.server.SimpleHTTPRequestHandler.extensions_map,
         ".md": "text/markdown; charset=utf-8",
@@ -108,7 +115,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_HEAD()
 
     def log_message(self, fmt: str, *args) -> None:
-        sys.stderr.write("  %s\n" % (fmt % args))
+        message = fmt % args
+        message = "".join(char if char.isprintable() else " " for char in message)
+        if len(message) > 512:
+            message = f"{message[:509]}..."
+        sys.stderr.write("  %s\n" % message)
 
 
 def port_available(host: str, port: int) -> bool:

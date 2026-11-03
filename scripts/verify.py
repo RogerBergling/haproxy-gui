@@ -9,14 +9,27 @@ unit tests; it does not run a browser.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC = ROOT / "public"
+PRIVATE_MARKERS_FILE = ROOT / "scripts" / "private-markers.txt"
 ERRORS: list[str] = []
 CHECKS = 0
+
+# These are deliberately fake examples. Real private markers belong in the
+# gitignored scripts/private-markers.txt or in the
+# HAPROXY_WORKBENCH_PRIVATE_MARKERS environment variable, never in this file.
+DEFAULT_PRIVATE_MARKERS = [
+    "private.invalid",
+    "192.0.2.254",
+    "example-agency",
+    "service-a.private.invalid",
+    "service-b.private.invalid",
+]
 
 
 def check(condition: bool, message: str) -> None:
@@ -32,6 +45,26 @@ def read(path: Path) -> str:
     except FileNotFoundError:
         ERRORS.append(f"Missing required file: {path.relative_to(ROOT)}")
         return ""
+
+
+def load_private_markers() -> list[str]:
+    """Load fake defaults plus optional local/CI markers that are not published."""
+    markers = list(DEFAULT_PRIVATE_MARKERS)
+    if PRIVATE_MARKERS_FILE.is_file():
+        try:
+            markers.extend(
+                line.strip()
+                for line in PRIVATE_MARKERS_FILE.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+        except OSError:
+            pass
+    markers.extend(
+        line.strip()
+        for line in os.environ.get("HAPROXY_WORKBENCH_PRIVATE_MARKERS", "").splitlines()
+        if line.strip()
+    )
+    return sorted(set(markers))
 
 
 def require(path: str) -> None:
@@ -133,6 +166,9 @@ def main() -> int:
     ]:
         check(header in start, f"start.py is missing security header directive: {header}")
     check("list_directory" in start and "send_error(404" in start, "directory listing must be disabled")
+    check("server_version" in start, "start.py must override the default server banner")
+    check("version_string" in start, "start.py must not advertise the Python runtime")
+    check("isprintable" in start, "start.py must sanitize request-log output")
 
     # Packaging.
     dockerfile = read(ROOT / "Dockerfile")
@@ -170,13 +206,9 @@ def main() -> int:
     check("node --test" in package.get("scripts", {}).get("test", ""), "npm test must run node --test")
 
     # Personal data from the source configs must not leak into examples or docs.
-    forbidden = [
-        "bergling.net",
-        "192.168.4.",
-        "jordbruksverket",
-        "sendpass.bergling",
-        "learning.bergling",
-    ]
+    # The public defaults are fake; real markers are loaded from the optional
+    # local file or environment variable so they are never committed.
+    forbidden = load_private_markers()
     text_files = [
         file for file in ROOT.rglob("*")
         if file.is_file()
@@ -184,11 +216,11 @@ def main() -> int:
         and file.suffix in {".js", ".json", ".md", ".py", ".yml", ".yaml", ".html", ".css", ".cfg"}
     ]
     for file in text_files:
-        if file.resolve() == Path(__file__).resolve():
+        if file.resolve() in (Path(__file__).resolve(), PRIVATE_MARKERS_FILE.resolve()):
             continue
         content = read(file)
         for marker in forbidden:
-            check(marker not in content, f"personal data marker '{marker}' found in {file.relative_to(ROOT)}")
+            check(marker not in content, f"private data marker '{marker}' found in {file.relative_to(ROOT)}")
 
     if ERRORS:
         print(f"verification failed: {len(ERRORS)} issue(s) across {CHECKS} checks\n")

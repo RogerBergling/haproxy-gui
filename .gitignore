@@ -83,3 +83,6 @@ target/
 *.sqlite
 *.sqlite3
 *.db
+
+# Local-only private markers for scripts/verify.py (never commit real values)
+scripts/private-markers.txt

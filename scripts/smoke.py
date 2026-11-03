@@ -47,10 +47,11 @@ def main() -> int:
         ],
         cwd=ROOT,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
     base = f"http://127.0.0.1:{port}"
     failures: list[str] = []
+    log_output = ""
 
     def check(condition: bool, message: str) -> None:
         if not condition:
@@ -78,6 +79,12 @@ def main() -> int:
         check(headers.get("X-Frame-Options") == "DENY", "X-Frame-Options should be DENY")
         check(headers.get("X-Content-Type-Options") == "nosniff", "nosniff header missing")
         check("no-store" in headers.get("Cache-Control", ""), "Cache-Control should be no-store")
+        server = next((value for name, value in headers.items() if name.lower() == "server"), "")
+        check(server == "HAProxyWorkbench", "Server header should identify only the application")
+        check(
+            "Python" not in server and "SimpleHTTP" not in server,
+            "Server header must not reveal the Python/stdlib version",
+        )
 
         for asset in [
             "/assets/css/app.css",
@@ -111,6 +118,14 @@ def main() -> int:
 
         status, _, _ = request(f"{base}/", method="HEAD")
         check(status == 200, "HEAD / should return 200")
+
+        # A request line containing an ANSI escape must not reach stderr raw.
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=3) as raw:
+                raw.sendall(b"GET /log\x1b[31mtest HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                raw.recv(1024)
+        except Exception as error:  # noqa: BLE001 - smoke test reports any failure
+            failures.append(f"raw log test failed: {error}")
     except Exception as error:  # noqa: BLE001 - smoke test reports any failure
         failures.append(f"unexpected smoke-test error: {error}")
     finally:
@@ -119,6 +134,11 @@ def main() -> int:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
+            process.wait(timeout=5)
+        if process.stderr:
+            log_output = process.stderr.read().decode("utf-8", "replace")
+
+    check("\x1b" not in log_output, "request logs must not contain raw control characters")
 
     if failures:
         print("smoke test failed:\n")

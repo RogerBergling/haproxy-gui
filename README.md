@@ -18,6 +18,46 @@ The published container is a static file server. All parsing, analysis, topology
 
 ---
 
+## The easy way to get it running
+
+**You only need Docker with Compose. No account, database, build step or host-side Python/Node installation.**
+
+```bash
+curl -O https://raw.githubusercontent.com/RogerBergling/haproxy-gui/main/compose.yaml
+docker compose up -d
+```
+
+Open **<http://localhost:8004>**.
+
+That is the whole installation for local use.
+
+### First five minutes
+
+1. Click **Import configuration**, or open one of the two anonymised examples.
+2. Open **Analyze** to see warnings and safe fixes.
+3. Open **Topology** to see the routing graph and simulate a request.
+4. Use **Add service** to preview a new HTTPS, HTTP/www or TLS-passthrough service.
+5. Use **Compare** for two files and **History** to compare or restore saved versions.
+
+Everything — parsing, analysis, topology, simulation, history and generated changes — runs in your browser. Nothing is uploaded to the server.
+
+```bash
+# Stop it
+docker compose down
+
+# Update later
+docker compose pull
+docker compose up -d --force-recreate
+```
+
+> **First pull/auth issue?** If GHCR says the package is private, make it public under **GitHub → Packages → haproxy-gui → Package settings**, or run `docker login ghcr.io` first.
+>
+> **Exposing it beyond localhost?** Put it behind an HTTPS reverse proxy you trust. Read the [security model](#privacy-and-security-model) before making it public.
+
+Want the full feature tour first? [See what it does](#what-it-does) or jump to the [installation reference](#installation-reference), [development setup](#development) and [HAProxy versions](#haproxy-versions).
+
+---
+
 ## Screenshots
 
 | Home | Workbench |
@@ -176,9 +216,9 @@ Read the full model in the app at **Security & privacy** (`#/security`) or in [t
 
 ---
 
-## Quick start
+## Installation reference
 
-### Docker Compose (recommended for users)
+### Docker Compose
 
 The repository includes a ready-to-use [`compose.yaml`](compose.yaml) that pulls the published image, publishes port **8004**, uses a read-only root filesystem and drops capabilities. It intentionally does **not** include Watchtower and does not mount the Docker socket.
 

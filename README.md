@@ -444,3 +444,14 @@ The static handler supports `GET`/`HEAD`, blocks directory indexes and keeps res
 MIT licensed — see [LICENSE](LICENSE). **Use at your own risk.** Generated configurations and automated fixes are provided without warranty. Configurations are annotated with the tool name, UTC date/time and action when the app creates or modifies them. You remain responsible for review, validation with the target HAProxy binary, staging tests and production rollback.
 
 HAProxy is a registered trademark of HAProxy Technologies. This project is unofficial and is not affiliated with or endorsed by HAProxy Technologies. The analyzer and guide complement, but never replace, the official configuration manual and `haproxy -c`.
+
+---
+
+## Development note
+
+This project was developed with AI assistance and human review. The maintainer
+defines the requirements, threat model, edge cases and acceptance criteria; AI
+helps write and refactor code; the maintainer tests, breaks and verifies it.
+The software is provided as-is, without warranty. See
+[How this was built](https://apps.bergling.net/how-this-was-built/) for the
+longer explanation.

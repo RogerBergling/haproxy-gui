@@ -457,8 +457,14 @@ dialog.modal::backdrop { background: rgba(2, 6, 15, .72); backdrop-filter: blur(
 .modal-head h2 { font-size: 1.3rem; margin: .5rem 0 .3rem; }
 .modal-lede { color: var(--muted); font-size: .86rem; }
 .modal-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; flex-wrap: wrap; }
+.modal-know { margin-top: .8rem; }
+.modal-know h3 { font-size: .82rem; margin: 0 0 .35rem; color: var(--text-soft); }
 .modal-details { margin: .7rem 0; padding-left: 1.2rem; color: var(--muted); font-size: .82rem; }
 .modal-details li { margin: .2rem 0; }
+.modal-ack { margin-top: .9rem; padding: .65rem .75rem; border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--warn) 5%, transparent); }
+.modal-ack > span { font-size: .8rem; color: var(--text-soft); }
+.health-check-modal .modal-card { max-width: min(980px, calc(100vw - 2rem)); }
+.health-check-preview { margin: .4rem 0 0; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-soft); color: var(--text-soft); font-size: .74rem; line-height: 1.55; overflow: auto; max-height: 260px; white-space: pre-wrap; }
 .modal-privacy { display: flex; gap: .5rem; align-items: flex-start; padding: .65rem .75rem; border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); background: color-mix(in srgb, var(--ok) 6%, transparent); border-radius: 8px; margin-top: .7rem; }
 .modal-privacy svg { color: var(--ok); margin-top: 2px; }
 .modal-privacy p { margin: 0; font-size: .74rem; color: var(--muted); }

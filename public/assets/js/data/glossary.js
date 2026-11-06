@@ -253,7 +253,7 @@ export const GLOSSARY = [
     aliases: ['check', 'probe'],
     short: 'An active probe that decides whether a server is usable.',
     detail:
-      'Enabled per server with `check`. The method can be a TCP connect, an HTTP status check (`option httpchk`) or a scripted check. Configure `inter`, `fall`, `rise` and `timeout check` to control detection latency and false positives.',
+      'Enabled per server with `check`. The method can be a TCP connect, an HTTP status check (`option httpchk`) or a scripted check. Configure `inter`, `fall`, `rise` and `timeout check` to control detection latency and false positives. A bare `option httpchk` sends `OPTIONS / HTTP/1.0`; use an explicit request such as `option httpchk GET /health` plus `http-check expect status 200` before enabling `check`.',
   },
   {
     term: 'inter / fall / rise',
@@ -261,7 +261,7 @@ export const GLOSSARY = [
     aliases: ['check timing'],
     short: 'Health-check interval and failure/success thresholds.',
     detail:
-      '`inter 2s fall 3 rise 2` checks every two seconds, marks a server down after three failures and up after two successes. Faster detection costs more probes and can cause flapping; slower detection leaves bad servers in rotation longer.',
+      '`inter 5s fall 3 rise 3` checks every five seconds, marks a server down after three failures and up after three successes. Faster detection costs more probes and can cause flapping; slower detection leaves bad servers in rotation longer.',
   },
   {
     term: 'Passive health checking',

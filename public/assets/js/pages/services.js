@@ -223,7 +223,7 @@ export async function renderServices(view, query) {
               <option value="first">First available</option>
             </select></label>
             <label class="field checkbox-field"><span>Upstream speaks TLS</span><input name="serverSsl" type="checkbox"><small>Adds <code>ssl</code> to the server line. Certificate verification still needs an explicit policy.</small></label>
-            <label class="field checkbox-field span-2"><span>Enable TCP health check</span><input name="check" type="checkbox" checked><small>Adds <code>check inter 2s fall 3 rise 2</code>. Use an HTTP health endpoint for application-level readiness.</small></label>
+            <label class="field checkbox-field span-2"><span>Enable TCP health check</span><input name="check" type="checkbox" checked><small>Adds <code>check inter 5s fall 3 rise 3</code>. Use an HTTP health endpoint for application-level readiness.</small></label>
           </div>
         </fieldset>
 

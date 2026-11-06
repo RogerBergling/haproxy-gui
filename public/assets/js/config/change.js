@@ -1,9 +1,10 @@
 /**
- * Stamp generated changes into the configuration itself.
+ * Append generated changes to an in-file changelog.
  *
- * A single replaceable marker keeps one current date/time/action annotation
- * instead of accumulating a new comment every time a fix is previewed or
- * applied. The marker is a valid HAProxy comment and is ignored by the parser.
+ * Every change prepends a new dated entry and leaves all previous entries
+ * untouched, so the configuration keeps its full modification history. The
+ * marker lines are valid HAProxy comments and are ignored by the parser.
+ * Newest entries are at the top; an exact duplicate is not added twice.
  */
 
 const MARKER = '# Modified by HAProxy Workbench on ';
@@ -16,20 +17,8 @@ export function stampWorkbenchChange(text, action, when = new Date()) {
   const line = `${MARKER}${timestamp}: ${cleanAction}. Use at your own risk; validate with haproxy -c before deployment.`;
   const normalized = String(text ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   const lines = normalized.split('\n');
-  let replaced = false;
 
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!lines[index].startsWith(MARKER)) continue;
-    if (!replaced) {
-      lines[index] = line;
-      replaced = true;
-    } else {
-      lines.splice(index, 1);
-      index -= 1;
-    }
-  }
-
-  if (!replaced) lines.unshift(line);
+  if (!lines.includes(line)) lines.unshift(line);
   return `${lines.join('\n').replace(/\s+$/, '')}\n`;
 }
 

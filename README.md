@@ -104,7 +104,7 @@ The dedicated **Compare** page loads two independent HAProxy files by picker, dr
 
 - A **Learn this config** tab walks through every directive in the imported file, section by section. Each row shows its line number, the exact directive, what it does, its effective context, why it matters, syntax and links into the deeper guides.
 - The Workbench **Structure** view remains available for quick technical inspection: section guides, effective modes, bind details and server/check state.
-- A 10-article learning library covers the config mental model, TLS architectures, ACL/routing order, health checks and balancing, timeouts/logging, security, performance, operations, version upgrades and troubleshooting.
+- An 11-article learning library covers the config mental model, TLS architectures, ACL/routing order, health checks and balancing, health-check safety, timeouts/logging, security, performance, operations, version upgrades and troubleshooting.
 - A searchable **glossary** of 58 HAProxy terms with aliases and operator context.
 - An **HAProxy versions** guide covering 2.6, 2.8, 3.0, 3.2, 3.3 and 3.4, including what changed, support/EOL context, breaking changes and a practical 2.x → 3.x upgrade checklist.
 - The Learning page links directly to the row-by-row walkthrough for the currently loaded config.
@@ -129,10 +129,12 @@ Findings that have a safe deterministic remediation expose a **Fix this** button
 - the resolved fix summary
 - score and error/warning deltas
 - the exact line diff
-- the risk to review before applying
+- **Do you want this?** — what the change does and when it is appropriate
+- **What you need to know** — prerequisites, risks and validation steps
+- an explicit acknowledgment checkbox for changes that can affect production traffic
 - an apply step that creates a new local history version
 
-The health-check warning in the examples — “Health-check options are set but no server has `check`” — is fixed directly by enabling `check inter 2s fall 3 rise 2` on the affected server lines. The old version remains available in History. Warnings that require an environment-specific decision (certificate paths, client CA bundles, logging destinations) still show manual guidance rather than making an unsafe change.
+The health-check warning in the examples — “Health-check options are set but no server has `check`” — is fixed by enabling `check inter 5s fall 3 rise 3` only where the configured check is safe. Backends with a bare `option httpchk` are deliberately skipped: HAProxy sends `OPTIONS / HTTP/1.0` by default, and a 401/404/405 response would mark a working server DOWN. Those backends keep the warning and open the **guided HTTP health-check editor**, which asks for an explicit method, path, expected status, Host header, interval, fall/rise and timeout, shows a preview and the exact risks, and requires acknowledgment before saving. Single-server backends show a full-outage warning because a false positive removes the only server. The old version remains available in History. Warnings that require an environment-specific decision (certificate paths, client CA bundles, logging destinations) still show manual guidance rather than making an unsafe change.
 
 ### See and simulate the routing graph
 
@@ -160,7 +162,7 @@ The guided wizard asks for the full network shape rather than hiding it:
 4. **Where traffic goes** — separate upstream IP/hostname and upstream port, upstream TLS, health check and balancing
 5. **Review** — diff, resolved listen/upstream values, style/placement explanation, current-vs-proposed routing and an interactive simulator that runs requests against the complete proposed file
 
-Generated edits follow the detected config design: indentation style, boxed or simple comments, new frontend after the last frontend, new backend after the last backend, and routes inserted before the first matching wildcard/rule or default backend. Each generated change is written back into the config with a replaceable marker containing **HAProxy Workbench, UTC date/time, action and a use-at-your-own-risk notice**.
+Generated edits follow the detected config design: indentation style, boxed or simple comments, new frontend after the last frontend, new backend after the last backend, and routes inserted before the first matching wildcard/rule or default backend. Each generated change is appended as a dated changelog entry at the top of the config, newest first, containing **HAProxy Workbench, UTC date/time, action and a use-at-your-own-risk notice**. Previous entries are preserved, so the config keeps its full modification history.
 
 It inspects the running configuration and can place a new HTTPS host behind an existing TCP/SNI edge and loopback TLS terminator, add a direct route to an existing TLS frontend, reuse an existing HTTP/HTTPS listener, or generate a completely new frontend and backend. It generates the backend and routing rule, then shows:
 
@@ -298,7 +300,7 @@ Open the site through the server, not as a `file://` URL, because ES modules and
 
 Both examples are fully anonymised: documentation TLDs (`example.com`, `example.net`) and TEST-NET IP ranges only.
 
-- **Example A — SNI passthrough + loopback termination**: a TCP edge inspects SNI, routes SSH/wildcard/partner/example.com traffic, hands selected hosts to a loopback TLS frontend, and returns explicit 421/404 fallbacks. It deliberately includes health-check options without server `check` lines, so the analyzer has something useful to explain.
+- **Example A — SNI passthrough + loopback termination**: a TCP edge inspects SNI, routes SSH/wildcard/partner/example.com traffic, hands selected hosts to a loopback TLS frontend, and returns explicit 421/404 fallbacks. It deliberately includes health-check options without server `check` lines, so the analyzer has something useful to explain and the guided HTTP check editor can turn a bare `option httpchk` into a safe explicit request.
 - **Example B — Edge TLS + client metadata + stick tables**: one HTTP/HTTPS frontend, conditional TLS metadata headers, client-certificate header handling without verification, cookie stickiness and `http-reuse never`. It deliberately includes a frontend without a bind and an unverified client-certificate path.
 
 The parser, analyzer, simulator and service wizard are tested against both architectures.
@@ -380,9 +382,9 @@ public/
       analyzer.js              # explainable findings and scoring
       simulate.js              # request/ACL/simulation engine
       wizard.js                # service placement, domain resolution and config proposal
-      bestpractices.js         # opt-in fixes, per-warning fixes and checklist
+      bestpractices.js         # opt-in fixes, guided HTTP checks, per-warning fixes and checklist
       style.js                 # indentation/comment/section-order detection
-      change.js                # dated change marker in generated configs
+      change.js                # append-only dated changelog in generated configs
       diagram.js               # SVG topology
       drawio.js                # editable draw.io topology export
       diff.js                  # line diff

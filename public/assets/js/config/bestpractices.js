@@ -51,6 +51,95 @@ function rawWithoutComment(item) {
   return item.raw.replace(/\s+#.*$/, '').trimEnd();
 }
 
+export function effectiveHttpCheck(model, backend) {
+  const disabled = backend.items.some(
+    (item) => item.keyword === 'no option' && item.value === 'httpchk',
+  );
+  if (disabled) return null;
+
+  const own = backend.items.find(
+    (item) => item.keyword === 'option' && item.value === 'httpchk',
+  );
+  if (own) return own;
+
+  return model.defaults[0]?.items.find(
+    (item) => item.keyword === 'option' && item.value === 'httpchk',
+  ) || null;
+}
+
+function hasExplicitHttpCheckRequest(model, backend) {
+  const items = [...backend.items, ...(model.defaults[0]?.items || [])];
+  return items.some(
+    (item) => item.keyword === 'http-check' && item.action === 'send',
+  );
+}
+
+/**
+ * A bare `option httpchk` sends `OPTIONS / HTTP/1.0`. Many applications answer
+ * that with 401/404/405, which HAProxy treats as a failed check. Enabling
+ * `check` on such a backend can therefore mark a healthy single-server app
+ * DOWN. Only auto-enable checks when the request is explicit.
+ */
+export function isBareHttpCheck(model, backend) {
+  const httpchk = effectiveHttpCheck(model, backend);
+  if (!httpchk) return false;
+  const explicitRequest = httpchk.args.length > 1;
+  return !explicitRequest && !hasExplicitHttpCheckRequest(model, backend);
+}
+
+export function isBareHttpCheckBackend(model, backendName) {
+  const backend = model.backends.find((entry) => entry.name === backendName);
+  return Boolean(backend && isBareHttpCheck(model, backend));
+}
+
+export function bareHttpCheckBackends(model) {
+  return model.backends.filter((backend) => backend.servers.length > 0 && isBareHttpCheck(model, backend));
+}
+
+const HTTP_CHECK_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+export function validateHttpHealthCheckOptions(options = {}) {
+  const errors = [];
+  const method = String(options.method || 'GET').toUpperCase();
+  const uri = String(options.uri || '').trim();
+  const status = String(options.status || '').trim();
+  const host = String(options.host || '').trim();
+  const inter = String(options.inter || '').trim();
+  const fall = String(options.fall || '').trim();
+  const rise = String(options.rise || '').trim();
+  const timeoutCheck = String(options.timeoutCheck || '').trim();
+
+  if (!HTTP_CHECK_METHODS.has(method)) {
+    errors.push('Method must be GET, HEAD or OPTIONS.');
+  }
+  if (!uri) {
+    errors.push('Path is required.');
+  } else if (method === 'OPTIONS' && uri === '*') {
+    // OPTIONS * is a valid HAProxy health-check request.
+  } else if (!uri.startsWith('/')) {
+    errors.push('Path must start with "/" (or use "*" with OPTIONS).');
+  } else if (/\s/.test(uri)) {
+    errors.push('Path must not contain whitespace.');
+  }
+  if (!/^[1-5]\d{2}(?:[-,][1-5]\d{2})*$/.test(status)) {
+    errors.push('Expected status must be a code such as 200, 204 or 200-299.');
+  }
+  if (host && !/^[A-Za-z0-9._:\[\]-]+$/.test(host)) {
+    errors.push('Host header contains invalid characters.');
+  }
+  for (const [label, value] of [['Interval', inter], ['Check timeout', timeoutCheck]]) {
+    if (!/^\d+(?:\.\d+)?(?:ms|s|m|h|d)?$/i.test(value) || Number.parseFloat(value) <= 0) {
+      errors.push(`${label} must be a positive duration such as 5s or 300ms.`);
+    }
+  }
+  for (const [label, value] of [['Fall', fall], ['Rise', rise]]) {
+    if (!/^\d+$/.test(value) || Number(value) < 1) {
+      errors.push(`${label} must be a positive integer.`);
+    }
+  }
+  return errors;
+}
+
 export function applyTlsBaseline(text, model) {
   const global = globalSection(model);
   const { item, args } = bindOptions(model);
@@ -114,24 +203,166 @@ export function applyTimeouts(text, model) {
 export function applyServerChecks(text, model) {
   const edits = [];
   let added = 0;
+  const skipped = [];
   for (const backend of model.backends) {
+    const hasUnchecked = backend.items.some(
+      (item) => item.keyword === 'server' && item.server && !item.server.flags.has('check'),
+    );
+    if (hasUnchecked && isBareHttpCheck(model, backend)) {
+      skipped.push(backend.name);
+      continue;
+    }
     for (const item of backend.items) {
       if (item.keyword !== 'server' || !item.server) continue;
       if (item.server.flags.has('check')) continue;
-      const raw = rawWithoutComment(item);
+      const indent = indentOf(model.lines[item.line - 1] || '');
+      const raw = `${indent}${rawWithoutComment(item)}`;
       const suffix = item.comment ? ` # ${item.comment}` : '';
       edits.push({
         type: 'replace',
         line: item.line,
-        text: `${raw} check inter 2s fall 3 rise 2${suffix}`,
+        text: `${raw} check inter 5s fall 3 rise 3${suffix}`,
       });
       added += 1;
     }
   }
-  if (edits.length === 0) return { text, summary: 'All servers already have health checks.' };
+  if (edits.length === 0) {
+    return {
+      text,
+      summary: skipped.length
+        ? `No checks added. ${skipped.join(', ')} use a bare option httpchk; configure an explicit health request first.`
+        : 'All servers already have health checks.',
+    };
+  }
+  const skippedNote = skipped.length
+    ? ` Skipped ${skipped.length} backend${skipped.length === 1 ? '' : 's'} with bare option httpchk: ${skipped.join(', ')}.`
+    : '';
   return {
     text: ensureTrailingNewline(applyEdits(text, edits)),
-    summary: `Enabled TCP health checks on ${added} server${added === 1 ? '' : 's'} (inter 2s, fall 3, rise 2).`,
+    summary: `Enabled health checks on ${added} server${added === 1 ? '' : 's'} (inter 5s, fall 3, rise 3).${skippedNote}`,
+  };
+}
+
+/**
+ * Apply a guided HTTP health check to one backend.
+ *
+ * The editor is intentionally conservative: it never overwrites an existing
+ * `http-check expect` rule, never removes `option httpchk`, and only adds
+ * `check` to servers that do not already have it.
+ */
+export function applyHttpHealthCheck(text, model, backendName, options = {}) {
+  const backend = model.backends.find((entry) => entry.name === backendName);
+  if (!backend) {
+    return { text, summary: '', errors: [`Backend "${backendName}" was not found.`] };
+  }
+  if (backend.servers.length === 0) {
+    return { text, summary: '', errors: [`Backend "${backendName}" has no servers.`] };
+  }
+
+  const errors = validateHttpHealthCheckOptions(options);
+  if (errors.length > 0) return { text, summary: '', errors };
+
+  const method = String(options.method || 'GET').toUpperCase();
+  const uri = String(options.uri || '/health').trim();
+  const status = String(options.status || '200').trim();
+  const host = String(options.host || '').trim();
+  const inter = String(options.inter || '5s').trim();
+  const fall = String(options.fall || '3').trim();
+  const rise = String(options.rise || '3').trim();
+  const timeoutCheck = String(options.timeoutCheck || '3s').trim();
+  const checkSsl = Boolean(options.checkSsl);
+
+  const directExpect = backend.items.find(
+    (item) => item.keyword === 'http-check' && item.action === 'expect',
+  );
+  if (directExpect && directExpect.args[1] !== 'status') {
+    return {
+      text,
+      summary: '',
+      errors: ['This backend already has a custom `http-check expect` rule. Edit it manually instead of using the guided editor.'],
+    };
+  }
+
+  const edits = [];
+  const inserted = [];
+  const firstItem = backend.items[0];
+  const indent = firstItem
+    ? indentOf(model.lines[firstItem.line - 1] || '')
+    : '\t';
+  const firstServer = backend.items.find(
+    (item) => item.keyword === 'server' || item.keyword === 'server-template',
+  );
+  const insertAt = firstServer ? firstServer.line : backend.endLine + 1;
+
+  const directHttpchk = backend.items.find(
+    (item) => item.keyword === 'option' && item.value === 'httpchk',
+  );
+  if (directHttpchk) {
+    const comment = directHttpchk.comment ? ` # ${directHttpchk.comment}` : '';
+    edits.push({
+      type: 'replace',
+      line: directHttpchk.line,
+      text: `${indent}option httpchk ${method} ${uri}${comment}`,
+    });
+  } else {
+    // This also overrides an inherited bare `option httpchk` from defaults.
+    inserted.push(`${indent}option httpchk ${method} ${uri}`);
+  }
+
+  if (host) {
+    const hasSend = [...backend.items, ...(model.defaults[0]?.items || [])]
+      .some((item) => item.keyword === 'http-check' && item.action === 'send');
+    if (!hasSend) inserted.push(`${indent}http-check send hdr Host ${host}`);
+  }
+
+  if (directExpect) {
+    const comment = directExpect.comment ? ` # ${directExpect.comment}` : '';
+    edits.push({
+      type: 'replace',
+      line: directExpect.line,
+      text: `${indent}http-check expect status ${status}${comment}`,
+    });
+  } else {
+    inserted.push(`${indent}http-check expect status ${status}`);
+  }
+
+  const directCheckTimeout = backend.items.find(
+    (item) => item.keyword === 'timeout' && item.timeoutName === 'check',
+  );
+  if (!directCheckTimeout) inserted.push(`${indent}timeout check ${timeoutCheck}`);
+
+  if (inserted.length > 0) {
+    edits.push({ type: 'insert', line: insertAt, lines: inserted });
+  }
+
+  let added = 0;
+  for (const item of backend.items) {
+    if (item.keyword !== 'server' || !item.server) continue;
+    if (item.server.flags.has('check')) continue;
+    const serverIndent = indentOf(model.lines[item.line - 1] || '');
+    const raw = `${serverIndent}${rawWithoutComment(item)}`;
+    const suffix = item.comment ? ` # ${item.comment}` : '';
+    const flags = `check inter ${inter} fall ${fall} rise ${rise}${checkSsl && item.server.flags.has('ssl') ? ' check-ssl' : ''}`;
+    edits.push({ type: 'replace', line: item.line, text: `${raw} ${flags}${suffix}` });
+    added += 1;
+  }
+
+  const updated = ensureTrailingNewline(applyEdits(text, edits));
+  if (updated === ensureTrailingNewline(text)) {
+    return { text, summary: '', errors: ['The requested health-check settings are already present.'] };
+  }
+
+  const stamped = options.stamp === false
+    ? updated
+    : stampWorkbenchChange(
+      updated,
+      `Configured HTTP health check for ${backend.name}: ${method} ${uri} -> ${status}`,
+    );
+
+  return {
+    text: stamped,
+    summary: `Configured ${method} ${uri} -> ${status}${host ? ` with Host: ${host}` : ''} and ${added > 0 ? `enabled checks on ${added} server${added === 1 ? '' : 's'}` : 'kept the existing server checks'} in ${backend.name}.`,
+    added,
   };
 }
 
@@ -210,6 +441,7 @@ export const BEST_PRACTICE_FIXES = [
       'TLS 1.0/1.1 are deprecated. Session tickets with static keys weaken forward secrecy. This fix updates the global bind defaults only; per-bind options can still override them, so review the diff.',
     risk: 'Low. Old clients that cannot negotiate TLS 1.2 will be rejected. Test before applying to public endpoints.',
     impact: 'TLS',
+    requiresAcknowledgement: true,
     applies: (model) => sslBinds(model).length > 0 && !effectiveTlsBaseline(model),
     apply: applyTlsBaseline,
   },
@@ -221,6 +453,7 @@ export const BEST_PRACTICE_FIXES = [
       'This fix only fills gaps. It never overwrites an existing timeout. Values are deliberately conservative starting points: connect 5s, client/server 30s, http-request 10s, http-keep-alive 30s.',
     risk: 'Low–medium. A 30s server timeout may be too short for long-running generation or streaming endpoints. Review the values before applying.',
     impact: 'Reliability',
+    requiresAcknowledgement: true,
     applies: (model) => {
       const defaults = model.defaults[0];
       if (!defaults) return false;
@@ -232,13 +465,15 @@ export const BEST_PRACTICE_FIXES = [
   },
   {
     id: 'server-checks',
-    title: 'Enable health checks on every server',
-    summary: 'Add `check inter 2s fall 3 rise 2` to server lines that lack active checks.',
+    title: 'Enable health checks where the check is safe',
+    summary: 'Add `check inter 5s fall 3 rise 3` to server lines that lack active checks, except backends with a bare `option httpchk`.',
     detail:
-      'This is a TCP connect check. If an existing backend has `option httpchk` or `option tcp-check`, the added `check` activates that configured method. Health checks remove dead servers from rotation before users see errors.',
-    risk: 'Medium. Services that reject short-lived connections may be marked down. For HTTP applications, prefer an application health endpoint with `option httpchk GET /health`.',
+      'This is a TCP connect check unless the backend already configures `option httpchk` or `option tcp-check`; in that case the added `check` activates the configured method. Backends with a bare `option httpchk` are skipped because HAProxy sends `OPTIONS / HTTP/1.0` by default, and a 401/404/405 response would mark a healthy server DOWN. Configure an explicit request such as `option httpchk GET /health` plus `http-check expect status 200` first. Health checks remove dead servers from rotation before users see errors.',
+    risk: 'Medium. A false positive on a single-server backend is a full outage. Services that reject short-lived connections may be marked down. Test the exact check against every application before applying.',
     impact: 'Availability',
+    requiresAcknowledgement: true,
     applies: (model) => model.backends.some((backend) =>
+      !isBareHttpCheck(model, backend) &&
       backend.items.some((item) => item.keyword === 'server' && item.server && !item.server.flags.has('check')),
     ),
     apply: applyServerChecks,
@@ -251,6 +486,7 @@ export const BEST_PRACTICE_FIXES = [
       'Applications behind HAProxy otherwise see the proxy address as the client. This fix adds the standard X-Forwarded-For header only where no manual forwarding was detected.',
     risk: 'Low–medium. The backend must trust X-Forwarded-For only from HAProxy; otherwise clients can spoof it. Do not enable this on a frontend that already receives untrusted X-Forwarded-For headers from another proxy.',
     impact: 'Observability',
+    requiresAcknowledgement: true,
     applies: (model) => frontendsMissingForwardfor(model).length > 0,
     apply: applyForwardfor,
   },
@@ -277,6 +513,7 @@ export const BEST_PRACTICE_FIXES = [
       'The admin socket can change server state and weights. Ensure only the HAProxy owner/group can access it.',
     risk: 'Low–medium. A monitoring process that previously relied on broader socket permissions may need to join the HAProxy group.',
     impact: 'Security',
+    requiresAcknowledgement: true,
     applies: (model) => {
       const global = globalSection(model);
       const socket = global?.items.find((item) => item.keyword === 'stats' && item.args[0] === 'socket');
@@ -311,9 +548,15 @@ export function fixIdsForFinding(finding) {
 }
 
 export function canFixFinding(model, finding) {
+  if (finding?.id?.startsWith('health-bare-httpchk-')) return false;
   return fixIdsForFinding(finding).some((id) => {
     const fix = BEST_PRACTICE_FIXES.find((entry) => entry.id === id);
-    return fix ? fix.applies(model) : false;
+    if (!fix || !fix.applies(model)) return false;
+    if (id === 'server-checks' && finding?.backend) {
+      const backend = model.backends.find((entry) => entry.name === finding.backend);
+      if (!backend || isBareHttpCheck(model, backend)) return false;
+    }
+    return true;
   });
 }
 
@@ -352,6 +595,9 @@ export function buildBestPracticeChecklist(model, analysis) {
   const http = model.frontends.filter((frontend) => frontend.effectiveMode === 'http' && frontend.binds.length > 0);
   const servers = model.backends.flatMap((backend) => backend.servers.map((server) => ({ backend, server })));
   const allChecked = servers.length === 0 || servers.every(({ server }) => server.flags.has('check'));
+  const bareHttpCheck = model.backends.some((backend) =>
+    backend.servers.length > 0 && isBareHttpCheck(model, backend),
+  );
   const statsSocket = model.global?.items.find((item) => item.keyword === 'stats' && item.args[0] === 'socket');
   const hasLog = Boolean(model.global?.items.some((item) => item.keyword === 'log')) ||
     Boolean(defaults?.items.some((item) => item.keyword === 'log'));
@@ -432,13 +678,19 @@ export function buildBestPracticeChecklist(model, analysis) {
     check(
       'health',
       'All servers have active health checks',
-      servers.length === 0 ? 'n/a' : allChecked ? 'pass' : 'fail',
+      servers.length === 0 ? 'n/a' : !allChecked ? 'fail' : bareHttpCheck ? 'warn' : 'pass',
       servers.length === 0
         ? 'No servers are defined.'
-        : allChecked
-          ? 'Every server has a check. Review timing and the check method (TCP vs HTTP health endpoint).'
-          : `${servers.filter(({ server }) => !server.flags.has('check')).length} server(s) have no check.`,
-      servers.length && !allChecked ? { type: 'fix', id: 'server-checks', label: 'Enable checks' } : null,
+        : !allChecked
+          ? `${servers.filter(({ server }) => !server.flags.has('check')).length} server(s) have no check.`
+          : bareHttpCheck
+            ? 'Every server has a check, but at least one backend uses a bare `option httpchk`. That sends `OPTIONS /` and can mark a healthy server DOWN. Configure an explicit health endpoint.'
+            : 'Every server has a check. Review timing and the check method (TCP vs HTTP health endpoint).',
+      servers.length && !allChecked
+        ? { type: 'fix', id: 'server-checks', label: 'Enable checks' }
+        : bareHttpCheck
+          ? { type: 'http-checks', label: 'Configure HTTP checks' }
+          : null,
     ),
     check(
       'logging',

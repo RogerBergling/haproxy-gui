@@ -472,7 +472,7 @@ option forwardfor`,
     server app1 192.0.2.10:8080
 
     # Right: checks are active
-    server app1 192.0.2.10:8080 check inter 2s fall 3 rise 2
+    server app1 192.0.2.10:8080 check inter 5s fall 3 rise 3
 
 backend bk_db
     mode tcp
@@ -482,6 +482,12 @@ backend bk_db
           {
             t: 'p',
             text: 'A TCP connect check proves the port accepts connections. An HTTP check can prove the application returns a healthy status. Neither proves that a dependency such as a database is ready, so choose a health endpoint whose semantics match your routing goal.',
+          },
+          {
+            t: 'note',
+            tone: 'warn',
+            title: 'Bare option httpchk sends OPTIONS /',
+            text: '`option httpchk` without a method and URI sends `OPTIONS / HTTP/1.0` and only accepts 2xx/3xx responses. Many applications return 401, 404 or 405 for that request, so adding `check` can mark a healthy single-server app DOWN. Use an explicit request such as `option httpchk GET /health` plus `http-check expect status 200`, or use a plain TCP check instead. See [Health checks that do not break apps](#/learn/health-checks-safe).',
           },
         ],
       },
@@ -576,6 +582,231 @@ backend bk_db
           {
             t: 'p',
             text: 'The Workbench simulation lets you mark servers down and see the selected failover target, 503 or default response. It does not model real health-check timers or queueing; use it to verify routing intent, then test the timers in staging.',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    slug: 'health-checks-safe',
+    title: 'Health checks that do not break apps',
+    eyebrow: 'Availability',
+    description: 'Why a check can mark a healthy server DOWN, how bare option httpchk behaves, and a safe rollout checklist.',
+    level: 'Intermediate',
+    minutes: 12,
+    tags: ['health checks', 'option httpchk', 'fall', 'rise', 'timeout check', 'single server'],
+    sections: [
+      {
+        id: 'what-check-does',
+        title: 'What `check` actually probes',
+        blocks: [
+          {
+            t: 'p',
+            text: '`option httpchk` and `option tcp-check` only describe a probe. The server line must contain `check` for HAProxy to run it. Without `check`, those options are inert and HAProxy only discovers failures when a client request fails.',
+          },
+          {
+            t: 'code',
+            label: 'Inert options versus active checks',
+            code: `# Inert: option httpchk is present, but HAProxy never probes
+backend bk_app
+    mode http
+    option httpchk
+    server app1 192.0.2.10:8000
+
+# Active TCP connect check
+backend bk_tcp
+    mode tcp
+    server db1 192.0.2.20:5432 check inter 5s fall 3 rise 2
+
+# Active HTTP check with an explicit request
+backend bk_http
+    mode http
+    option httpchk GET /health
+    http-check expect status 200
+    server app1 192.0.2.10:8000 check inter 5s fall 3 rise 3`,
+          },
+          {
+            t: 'p',
+            text: 'A plain `check` in HTTP mode is still a TCP connect check. It proves that the port accepts connections, not that the application can serve requests. An HTTP check is more meaningful, but only if the endpoint is cheap and honest.',
+          },
+        ],
+      },
+      {
+        id: 'bare-httpchk',
+        title: 'The bare `option httpchk` trap',
+        blocks: [
+          {
+            t: 'p',
+            text: 'A bare `option httpchk` does not send `GET /health`. It sends `OPTIONS / HTTP/1.0` by default. HAProxy treats only 2xx and 3xx responses as healthy. A 401, 403, 404 or 405 fails the check.',
+          },
+          {
+            t: 'table',
+            head: ['Application response to OPTIONS /', 'HAProxy result'],
+            rows: [
+              ['200 or 302', 'Healthy'],
+              ['401 or 403', 'Failed — authentication is required'],
+              ['404', 'Failed — no route for OPTIONS /'],
+              ['405', 'Failed — method not allowed'],
+              ['500 or timeout', 'Failed'],
+            ],
+          },
+          {
+            t: 'p',
+            text: 'This is why the same change can break some services and not others. A framework that answers `OPTIONS /` with 200 or 302 stays UP; an app that returns 404/405 or requires authentication goes DOWN. A single-server backend then has nowhere else to send traffic, so users get 503.',
+          },
+          {
+            t: 'note',
+            tone: 'danger',
+            title: 'A false positive can be a full outage',
+            text: '`inter 2s fall 3` removes a server after roughly six seconds of failures. If that server is the only one in the backend, the application is unavailable. Multi-server backends hide the same false positive by shifting traffic — until the remaining servers are overloaded.',
+          },
+          {
+            t: 'code',
+            label: 'Bad, safe HTTP, and safe TCP',
+            code: `# Dangerous: sends OPTIONS / and accepts only 2xx/3xx
+backend bk_sendpass
+    mode http
+    option httpchk
+    server sendpass 192.0.2.40:8000 check inter 2s fall 3 rise 2
+
+# Safe HTTP check: explicit request and expected status
+backend bk_sendpass
+    mode http
+    option httpchk GET /health
+    http-check expect status 200
+    server sendpass 192.0.2.40:8000 check inter 5s fall 3 rise 3
+
+# Safe TCP check: proves only that the port accepts connections
+backend bk_sendpass
+    mode http
+    server sendpass 192.0.2.40:8000 check inter 5s fall 3 rise 3`,
+          },
+          {
+            t: 'p',
+            text: 'If the application routes by virtual host, add the Host header explicitly: `http-check send hdr Host app.example.com`. For a TLS upstream, add `check-ssl` (and `check-sni` when the application requires SNI) to the server line.',
+          },
+        ],
+      },
+      {
+        id: 'timing',
+        title: 'inter, fall, rise and timeout check',
+        blocks: [
+          {
+            t: 'table',
+            head: ['Setting', 'Meaning', 'Trade-off'],
+            rows: [
+              ['inter', 'Time between checks', 'Shorter detects faster but adds probe load'],
+              ['fall', 'Consecutive failures before DOWN', 'Higher avoids flapping, delays removal'],
+              ['rise', 'Consecutive successes before UP', 'Higher avoids premature return to service'],
+              ['timeout check', 'Maximum check duration', 'Too short marks slow-but-healthy servers down'],
+              ['fastinter/downinter', 'Faster probing while transitioning/down', 'More probes during incidents'],
+            ],
+          },
+          {
+            t: 'p',
+            text: '`timeout check` defaults to the value of `inter` when it is not set. With `inter 2s`, every check must complete within two seconds. A GC pause, database lock or cold cache can exceed that and fail a healthy server. Set `timeout check` explicitly from the endpoint’s measured latency, not from a guess.',
+          },
+          {
+            t: 'p',
+            text: 'Detection time is not exactly `inter × fall`: checks can be delayed by connection setup, timeouts and scheduling. Measure it in staging rather than assuming the arithmetic.',
+          },
+        ],
+      },
+      {
+        id: 'probe-side-effects',
+        title: 'Probes are real traffic',
+        blocks: [
+          {
+            t: 'ul',
+            items: [
+              'Apps that log every connection can fill disks or trigger alerts.',
+              'Per-IP rate limits, fail2ban or a WAF can ban the HAProxy address.',
+              'Single-threaded apps or small accept backlogs can be affected by frequent probes under load.',
+              'TLS handshakes, authentication and database work make a probe expensive.',
+              'Health endpoints that create sessions, write data or depend on a shared database can cause side effects or cascade failures.',
+              'Some protocols log connect-and-close probes as errors; use a protocol-aware check or accept the noise.',
+            ],
+          },
+        ],
+      },
+      {
+        id: 'blast-radius',
+        title: 'Blast radius: one server or many',
+        blocks: [
+          {
+            t: 'p',
+            text: 'On a multi-server backend, a false positive removes one server and the rest absorb the traffic. On a single-server backend, the same event is a full outage. Removing one server can also overload the remaining pool, causing their checks to fail too.',
+          },
+          {
+            t: 'p',
+            text: 'Before enabling a check, ask: how many servers are behind this backend, how much spare capacity remains, and does the application keep session state locally?',
+          },
+        ],
+      },
+      {
+        id: 'safe-rollout',
+        title: 'A safe rollout checklist',
+        blocks: [
+          {
+            t: 'checklist',
+            items: [
+              'Choose an endpoint that returns the expected status without authentication, writes or expensive work.',
+              'Test the exact request from the HAProxy host with curl, including Host and TLS/SNI if relevant.',
+              'Configure an explicit request: `option httpchk GET /health` and `http-check expect status 200`.',
+              'Set an explicit `timeout check` above the endpoint’s normal response time.',
+              'Start conservatively: `inter 5s fall 3 rise 3` is usually safer than 2s/3/2 for application checks.',
+              'If the app warms up slowly, add `slowstart` so it does not receive full traffic immediately after UP.',
+              'Run `haproxy -c -f` with the target binary and test in staging.',
+              'Watch `check_status`, `check_duration` and `lastchg` in the stats page during the first deployment.',
+            ],
+          },
+        ],
+      },
+      {
+        id: 'patterns',
+        title: 'Three safe patterns',
+        blocks: [
+          {
+            t: 'code',
+            label: 'HTTP, TCP and TLS upstream checks',
+            code: `# HTTP application check
+backend bk_app_http
+    mode http
+    option httpchk GET /health
+    http-check expect status 200
+    server app1 192.0.2.10:8000 check inter 5s fall 3 rise 3
+
+# TCP connect check
+backend bk_app_tcp
+    mode tcp
+    server app1 192.0.2.10:8000 check inter 5s fall 3 rise 3
+
+# HTTPS upstream check
+backend bk_app_https
+    mode http
+    option httpchk GET /health
+    http-check expect status 200
+    server app1 192.0.2.10:443 ssl check check-ssl check-sni app.example.com inter 5s fall 3 rise 3`,
+          },
+          {
+            t: 'note',
+            tone: 'warn',
+            title: 'TCP checks are shallow',
+            text: 'A TCP connect check stays green when the application is deadlocked, out of database connections or returning 500s, as long as the kernel still accepts connections. Use it when a port check is the right level of confidence, not as a substitute for application readiness.',
+          },
+        ],
+      },
+      {
+        id: 'when-not',
+        title: 'When not to use an active check',
+        blocks: [
+          {
+            t: 'p',
+            text: 'If an application cannot tolerate probes, or a single server cannot afford a false positive, a longer interval and higher fall count may be safer. A plain TCP check is less precise but less intrusive. Passive observation and application metrics can complement active checks; they are not a substitute for understanding the failure mode.',
+          },
+          {
+            t: 'p',
+            text: 'Do not use a health check to test a dependency that is shared by every server unless you want a shared outage to remove the whole pool. Readiness checks should answer “should this server receive traffic now?”, not “is every dependency perfect?”.',
           },
         ],
       },

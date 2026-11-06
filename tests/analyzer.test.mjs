@@ -134,3 +134,67 @@ backend bk
   const analysis = analyzeConfig(parseConfig(config));
   assert.ok(!analysis.findings.some((finding) => finding.id === 'security-unconditional-proto-internal'));
 });
+
+test('flags a bare option httpchk even when servers already have check', () => {
+  const config = `global
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+frontend fe
+    bind *:80
+    default_backend bk
+backend bk
+    mode http
+    option httpchk
+    server app 192.0.2.10:8000 check inter 2s fall 3 rise 2
+`;
+  const analysis = analyzeConfig(parseConfig(config));
+  const finding = analysis.findings.find((entry) => entry.id === 'health-bare-httpchk-bk');
+  assert.ok(finding);
+  assert.equal(finding.severity, 'warning');
+  assert.equal(finding.backend, 'bk');
+  assert.equal(finding.docs, 'health-checks-safe');
+  assert.match(finding.detail, /OPTIONS \/ HTTP\/1\.0/);
+});
+
+test('does not duplicate the bare-httpchk warning when checks are not enabled yet', () => {
+  const config = `global
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+frontend fe
+    bind *:80
+    default_backend bk
+backend bk
+    mode http
+    option httpchk
+    server app 192.0.2.10:8000
+`;
+  const analysis = analyzeConfig(parseConfig(config));
+  assert.ok(analysis.findings.some((entry) => entry.id === 'health-checks-not-enabled-bk'));
+  assert.ok(!analysis.findings.some((entry) => entry.id.startsWith('health-bare-httpchk-')));
+});
+
+test('does not flag an explicit option httpchk request', () => {
+  const config = `global
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+frontend fe
+    bind *:80
+    default_backend bk
+backend bk
+    mode http
+    option httpchk GET /health
+    http-check expect status 200
+    server app 192.0.2.10:8000 check inter 5s fall 3 rise 3
+`;
+  const analysis = analyzeConfig(parseConfig(config));
+  assert.ok(!analysis.findings.some((entry) => entry.id.startsWith('health-bare-httpchk-')));
+});

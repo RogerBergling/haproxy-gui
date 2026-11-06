@@ -12,10 +12,19 @@ test('stamps a generated change with tool, UTC time, action and risk notice', ()
   assert.ok(result.endsWith('global\n    maxconn 1000\n'));
 });
 
-test('replaces the previous marker instead of accumulating comments', () => {
+test('prepends a changelog entry and preserves every previous entry', () => {
   const first = stampWorkbenchChange('global\n', 'First change', new Date('2026-11-01T10:00:00Z'));
   const second = stampWorkbenchChange(first, 'Second change', new Date('2026-11-01T11:00:00Z'));
-  assert.equal((second.match(/# Modified by HAProxy Workbench on /g) || []).length, 1);
+  assert.equal((second.match(/# Modified by HAProxy Workbench on /g) || []).length, 2);
+  assert.ok(second.startsWith(`${MARKER}2026-11-01T11:00:00.000Z:`));
   assert.match(second, /Second change/);
-  assert.ok(!second.includes('First change'));
+  assert.match(second, /First change/);
+  assert.ok(second.endsWith('global\n'));
+});
+
+test('does not add the exact same changelog entry twice', () => {
+  const when = new Date('2026-11-01T12:00:00Z');
+  const first = stampWorkbenchChange('global\n', 'Same change', when);
+  const second = stampWorkbenchChange(first, 'Same change', when);
+  assert.equal((second.match(/# Modified by HAProxy Workbench on /g) || []).length, 1);
 });

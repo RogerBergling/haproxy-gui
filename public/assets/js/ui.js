@@ -213,9 +213,12 @@ export function confirmDialog({
   cancelLabel = 'Cancel',
   tone = 'primary',
   details = [],
+  detailsTitle = 'What you need to know',
+  acknowledgement = null,
 } = {}) {
   if (typeof document === 'undefined' || !document.createElement('dialog').showModal) {
-    return Promise.resolve(window.confirm(message || title));
+    const fallback = [title, message, ...details, acknowledgement].filter(Boolean).join('\n\n');
+    return Promise.resolve(window.confirm(fallback));
   }
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
@@ -227,10 +230,11 @@ export function confirmDialog({
           <h2>${esc(title)}</h2>
           ${message ? `<p class="modal-lede">${esc(message)}</p>` : ''}
         </div>
-        ${details.length ? `<ul class="modal-details">${details.map((detail) => `<li>${esc(detail)}</li>`).join('')}</ul>` : ''}
+        ${details.length ? `<div class="modal-know"><h3>${esc(detailsTitle)}</h3><ul class="modal-details">${details.map((detail) => `<li>${esc(detail)}</li>`).join('')}</ul></div>` : ''}
+        ${acknowledgement ? `<label class="checkbox-field modal-ack"><input type="checkbox" data-ack><span>${esc(acknowledgement)}</span></label>` : ''}
         <div class="modal-actions">
           <button class="btn btn-ghost" data-action="cancel" type="button">${esc(cancelLabel)}</button>
-          <button class="btn ${tone === 'danger' ? 'btn-danger' : 'btn-primary'}" data-action="confirm" type="button">${esc(confirmLabel)}</button>
+          <button class="btn ${tone === 'danger' ? 'btn-danger' : 'btn-primary'}" data-action="confirm" type="button" ${acknowledgement ? 'disabled' : ''}>${esc(confirmLabel)}</button>
         </div>
       </div>`;
     document.body.append(dialog);
@@ -238,10 +242,17 @@ export function confirmDialog({
       if (dialog.open) dialog.close();
       resolve(value);
     };
+    const confirmButton = dialog.querySelector('[data-action="confirm"]');
+    const acknowledgementInput = dialog.querySelector('[data-ack]');
+    if (acknowledgementInput && confirmButton) {
+      acknowledgementInput.addEventListener('change', () => {
+        confirmButton.disabled = !acknowledgementInput.checked;
+      });
+    }
     dialog.addEventListener('click', (event) => {
       const action = event.target.closest('[data-action]')?.dataset.action;
       if (action === 'cancel') close(false);
-      if (action === 'confirm') close(true);
+      if (action === 'confirm' && !confirmButton?.disabled) close(true);
       if (event.target === dialog) close(false);
     });
     dialog.addEventListener('cancel', (event) => {
@@ -250,7 +261,8 @@ export function confirmDialog({
     });
     dialog.addEventListener('close', () => dialog.remove());
     dialog.showModal();
-    dialog.querySelector('[data-action="confirm"]')?.focus();
+    if (acknowledgementInput) acknowledgementInput.focus();
+    else confirmButton?.focus();
   });
 }
 

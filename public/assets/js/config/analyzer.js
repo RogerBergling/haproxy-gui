@@ -14,6 +14,7 @@ import {
   isLoopbackHost,
   timeoutToMs,
 } from './parser.js';
+import { effectiveHttpCheck, isBareHttpCheck } from './bestpractices.js';
 
 export const SEVERITY_ORDER = { error: 0, warning: 1, recommendation: 2, info: 3 };
 
@@ -810,19 +811,41 @@ export function analyzeConfig(model, options = {}) {
     if (backend.servers.length > 0) {
       const hasChecks = backend.servers.some((server) => server.flags.has('check'));
       const hasTcpCheck = backend.items.some((item) => item.keyword === 'option' && item.value === 'tcp-check');
-      const hasHttpCheck = backend.items.some((item) => item.keyword === 'option' && item.value === 'httpchk');
+      const httpchk = effectiveHttpCheck(model, backend);
+      const hasHttpCheck = Boolean(httpchk);
+      const bareHttpCheck = isBareHttpCheck(model, backend);
       if ((hasTcpCheck || hasHttpCheck) && !hasChecks) {
         add({
           id: `health-checks-not-enabled-${backend.name}`,
           severity: 'warning',
           category: 'health',
           title: `Health check options are set but no server has \`check\``,
-          detail: `${sectionLabel(backend)} configures ${hasHttpCheck ? 'option httpchk' : 'option tcp-check'}, but no server line enables checking.`,
+          detail: `${sectionLabel(backend)} configures ${hasHttpCheck ? 'option httpchk' : 'option tcp-check'}, but no server line enables checking.${bareHttpCheck ? ' The bare `option httpchk` sends `OPTIONS / HTTP/1.0` by default.' : ''}`,
           why: 'This is a classic HAProxy mistake: the check method looks configured, but HAProxy never probes servers. Dead servers keep receiving traffic until connection failures occur.',
-          fix: 'Add `check` to each server (optionally with `inter`, `fall`, `rise`), for example `server app 192.0.2.10:8080 check inter 2s fall 3 rise 2`.',
+          fix: bareHttpCheck
+            ? 'Configure an explicit health request first, for example `option httpchk GET /health` plus `http-check expect status 200`, then add `check`. A bare `option httpchk` sends `OPTIONS / HTTP/1.0`; a 401/404/405 response marks the server DOWN.'
+            : 'Add `check` to each server (optionally with `inter`, `fall`, `rise`), for example `server app 192.0.2.10:8080 check inter 5s fall 3 rise 3`.',
           section: sectionLabel(backend),
           line: backend.servers[0].line,
-          docs: 'load-balancing',
+          backend: backend.name,
+          docs: 'health-checks-safe',
+          weight: 2,
+        });
+      }
+
+      if (hasChecks && bareHttpCheck) {
+        add({
+          id: `health-bare-httpchk-${backend.name}`,
+          severity: 'warning',
+          category: 'health',
+          title: `Bare \`option httpchk\` can mark healthy servers DOWN`,
+          detail: `${sectionLabel(backend)} has active checks, but uses a bare \`option httpchk\`. HAProxy sends \`OPTIONS / HTTP/1.0\` and treats only 2xx/3xx responses as healthy.`,
+          why: 'A 401, 404 or 405 response fails the check. After `fall` consecutive failures the server is marked DOWN. On a single-server backend that is a full outage, while another app may answer `OPTIONS /` with 200 and look healthy — which is why only some services break.',
+          fix: 'Configure an explicit request, for example `option httpchk GET /health` plus `http-check expect status 200`, or remove `option httpchk` and use a plain TCP check. Test the exact request with curl from the HAProxy host before enabling it.',
+          section: sectionLabel(backend),
+          line: httpchk?.line || backend.servers[0].line,
+          backend: backend.name,
+          docs: 'health-checks-safe',
           weight: 2,
         });
       }
@@ -839,7 +862,8 @@ export function analyzeConfig(model, options = {}) {
           fix: 'Enable `check` on every server or document why a server must remain unchecked.',
           section: sectionLabel(backend),
           line: unchecked[0].line,
-          docs: 'load-balancing',
+          backend: backend.name,
+          docs: 'health-checks-safe',
           weight: 1,
         });
       }
@@ -851,10 +875,11 @@ export function analyzeConfig(model, options = {}) {
           title: `No active health checks in "${backend.name}"`,
           detail: `${unchecked.length} server${unchecked.length === 1 ? '' : 's'} in this backend do not have \`check\`.`,
           why: 'Without checks, HAProxy only discovers a dead server when it tries to connect. Health checks remove failed servers from rotation before users see errors.',
-          fix: 'Add `check` (and optionally `inter 2s fall 3 rise 2`) to servers. For HTTP, configure `option httpchk` with an application health endpoint; for TCP, use `option tcp-check`.',
+          fix: 'Add `check` (and optionally `inter 5s fall 3 rise 3`) to servers. For HTTP, configure `option httpchk` with an application health endpoint; for TCP, use `option tcp-check`.',
           section: sectionLabel(backend),
           line: backend.servers[0].line,
-          docs: 'load-balancing',
+          backend: backend.name,
+          docs: 'health-checks-safe',
           weight: 1,
         });
       }
@@ -1083,7 +1108,7 @@ export function analyzeConfig(model, options = {}) {
       if (findings[index].id.startsWith(prefix)) findings.splice(index, 1);
     }
     const backends = group
-      .map((finding) => finding.section.replace(/^backend /, ''))
+      .map((finding) => finding.backend || finding.section.replace(/^backend /, ''))
       .filter(Boolean);
     findings.push({
       id: `${prefix}multiple`,
@@ -1095,7 +1120,8 @@ export function analyzeConfig(model, options = {}) {
       fix,
       section: 'multiple backends',
       line: group[0].line,
-      docs: 'load-balancing',
+      backends,
+      docs: 'health-checks-safe',
       weight: 1,
     });
   };
@@ -1104,13 +1130,19 @@ export function analyzeConfig(model, options = {}) {
     'health-checks-not-enabled-',
     'Health-check options are set but no server has `check`',
     (count, backends) => `${count} backends configure a health-check method, but none of their servers enable checks: ${backends.join(', ')}.`,
-    'Add `check` to each server (optionally with `inter`, `fall`, `rise`). The check method is inert without it.',
+    'Add `check` to each server (optionally with `inter`, `fall`, `rise`). The check method is inert without it. For a backend with a bare `option httpchk`, first configure an explicit request such as `option httpchk GET /health` and `http-check expect status 200`; the default `OPTIONS /` can mark healthy apps DOWN.',
   );
   collapse(
     'health-no-check-',
     'Backends without active health checks',
     (count, backends) => `${count} backends have servers without \`check\`: ${backends.join(', ')}.`,
-    'Add `check` (and optionally `inter 2s fall 3 rise 2`) to every server, or document why a server must remain unchecked.',
+    'Add `check` (and optionally `inter 5s fall 3 rise 3`) to every server, or document why a server must remain unchecked.',
+  );
+  collapse(
+    'health-bare-httpchk-',
+    'Bare `option httpchk` can mark healthy servers DOWN',
+    (count, backends) => `${count} backends use a bare \`option httpchk\` with active checks: ${backends.join(', ')}.`,
+    'Configure an explicit request such as `option httpchk GET /health` plus `http-check expect status 200`, or remove `option httpchk` and use a TCP check. A bare `option httpchk` sends `OPTIONS /` and only accepts 2xx/3xx.',
   );
 
   findings.sort((left, right) => {

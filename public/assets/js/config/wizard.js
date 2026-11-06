@@ -513,7 +513,7 @@ export function buildServicePlan(model, form) {
   const cert = input.cert || `/etc/haproxy/certs/${input.domain || input.name}.pem`;
   const bindHost = formatBindHost(input.bindAddress);
   const bind = `${bindHost}:${input.entryPort}`;
-  const serverFlags = [input.check ? 'check inter 2s fall 3 rise 2' : '', input.serverSsl ? 'ssl' : '']
+  const serverFlags = [input.check ? 'check inter 5s fall 3 rise 3' : '', input.serverSsl ? 'ssl' : '']
     .filter(Boolean)
     .join(' ');
   const serverAddress = input.server.address || '192.0.2.1:1';

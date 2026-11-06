@@ -129,6 +129,11 @@ def main() -> int:
         not re.search(r"<link[^>]+rel=[\"']stylesheet[\"'][^>]+href=[\"'](?![/])", index),
         "stylesheet references must be local absolute paths",
     )
+    for marker in ("data-build-number", "data-live-clock", "data-build-date"):
+        check(marker in index, f"index.html lacks the build stamp slot: {marker}")
+    version_js = read(PUBLIC / "assets/js/version.js")
+    for marker in ("hourCycle: 'h23'", "data-build-number", "buildNumber", "formatBuildDate"):
+        check(marker in version_js, f"version.js missing build/clock marker: {marker}")
 
     # Local ES module imports must resolve.
     js_files = sorted((PUBLIC / "assets" / "js").rglob("*.js"))

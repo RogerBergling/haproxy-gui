@@ -2,7 +2,7 @@ import { analyzeConfig } from '../config/analyzer.js';
 import { parseConfig } from '../config/parser.js';
 import { getSample, SAMPLES } from '../data/samples.js';
 import { getCurrent, getHistory, commitConfig } from '../storage.js';
-import { applyBuildInfo, formatBuildDate, loadBuildInfo, shortCommit, startClock } from '../version.js';
+import { applyBuildInfo, buildNumber, formatBuildDate, loadBuildInfo, shortCommit } from '../version.js';
 import {
   attachDropZone,
   confirmDialog,
@@ -52,10 +52,11 @@ export async function renderHome(view) {
         <p class="hero-lede">Import HAProxy, see the traffic graph, learn what every line does, catch security and reliability problems, and simulate routing changes before they reach production.</p>
         <div class="home-buildline" aria-label="Version, build, commit and build time">
           <span><em>Version</em><strong data-app-version>${esc(info.version)}</strong></span>
-          <span><em>Build</em><strong data-image-tag>${esc(info.imageTag)}</strong></span>
+          <span><em>Build</em><strong data-build-number>${esc(buildNumber(info.buildDate))}</strong></span>
+          <span><em>Image</em><strong data-image-tag>${esc(info.imageTag)}</strong></span>
           <span><em>Commit</em><strong>${/^[0-9a-f]{7,40}$/i.test(info.commit) ? commitLink : esc(shortCommit(info.commit))}</strong></span>
-          <span><em>Build time</em><strong>${esc(formatBuildDate(info.buildDate))}</strong></span>
-          <span class="home-live-time"><em>Now</em><time data-live-clock-stamp>—</time></span>
+          <span><em>Built</em><strong data-build-date>${esc(formatBuildDate(info.buildDate))}</strong></span>
+          <span class="home-live-time"><em>Now</em><time data-live-clock>—</time></span>
         </div>
         <div class="hero-actions">
           <button class="btn btn-primary btn-lg" type="button" data-action="import">${icon('upload')}Import configuration</button>
@@ -84,9 +85,10 @@ export async function renderHome(view) {
           </div>
           <div class="build-grid">
             <div><span>Version</span><strong data-app-version>${esc(info.version)}</strong></div>
-            <div><span>Build</span><strong data-image-tag>${esc(info.imageTag)}</strong></div>
+            <div><span>Build</span><strong data-build-number>${esc(buildNumber(info.buildDate))}</strong></div>
+            <div><span>Image</span><strong data-image-tag>${esc(info.imageTag)}</strong></div>
             <div><span>Commit</span><strong>${commitLink}</strong></div>
-            <div><span>Build time</span><strong>${esc(formatBuildDate(info.buildDate))}</strong></div>
+            <div><span>Built</span><strong data-build-date>${esc(formatBuildDate(info.buildDate))}</strong></div>
           </div>
           <div class="build-clock">
             ${icon('clock')}
@@ -213,10 +215,6 @@ export async function renderHome(view) {
     </section>
   `;
 
-  const clockCleanups = [
-    startClock(view.querySelector('[data-live-clock]')),
-    startClock(view.querySelector('[data-live-clock-stamp]')),
-  ].filter(Boolean);
   applyBuildInfo(view, info);
 
   const open = () => openImportDialog({
@@ -297,5 +295,4 @@ export async function renderHome(view) {
     });
   });
 
-  return () => clockCleanups.forEach((cleanup) => cleanup());
 }

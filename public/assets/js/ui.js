@@ -56,6 +56,7 @@ export function formatDate(value, options = {}) {
   return date.toLocaleString(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
+    hourCycle: 'h23',
     ...options,
   });
 }

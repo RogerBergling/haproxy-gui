@@ -7,12 +7,12 @@ import { parseConfig } from '../public/assets/js/config/parser.js';
 
 test('exports an editable draw.io topology with nodes, edges and risk note', () => {
   const model = parseConfig(SAMPLES.find((sample) => sample.id === 'sni-passthrough').text);
-  const xml = renderDrawio(model, { version: '1.3.0' });
+  const xml = renderDrawio(model, { version: '1.3.1' });
   assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
   assert.match(xml, /<mxfile host="HAProxy Workbench"/);
   assert.match(xml, /<diagram id="haproxy-topology"/);
   assert.match(xml, /Use at your own risk/);
-  assert.match(xml, /version 1\.3\.0/);
+  assert.match(xml, /version 1\.3\.1/);
   assert.match(xml, /ft_edge/);
   assert.match(xml, /bk_learning/);
   assert.match(xml, /TLS hand-off/);

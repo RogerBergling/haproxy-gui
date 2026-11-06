@@ -86,7 +86,7 @@ All screenshots use the included anonymised example configurations.
 
 ### Home page deployment stamp
 
-The first page shows the application **version, build/image, commit, build time and a live browser clock**, both in the hero build line and in the build card. The footer repeats the same build stamp. Values are baked into `/version.json` by the Docker build; local runs gracefully show `dev`/`local`.
+The first page shows the application **version, build number, image tag, commit, build time and a live browser clock**, both in the hero build line and in the build card. The footer repeats the same build stamp. Values are baked into `/version.json` by the Docker build; local runs gracefully show `dev`/`local`. The build number is derived from the UTC build timestamp as `YYYYMMDD.HHMM`, build time is always shown in UTC, and the live clock is forced to a 24-hour cycle in every locale.
 
 ### Import, edit and export
 
@@ -402,7 +402,7 @@ tests/                         # Node test runner suites
 
 ### Build metadata
 
-`Dockerfile` accepts `APP_VERSION`, `IMAGE_TAG`, `GIT_SHA` and `BUILD_DATE`, writes them to `public/version.json`, and labels the image. The home page shows version, image tag, commit, build time and a live browser clock; the footer repeats the build stamp.
+`Dockerfile` accepts `APP_VERSION`, `IMAGE_TAG`, `GIT_SHA` and `BUILD_DATE`, writes them to `public/version.json`, and labels the image. The home page shows version, build number, image tag, commit, UTC build time and a live 24-hour browser clock; the footer repeats the build stamp and clock. The build number is derived from `BUILD_DATE` as `YYYYMMDD.HHMM`, so no extra build argument is required.
 
 ### Publishing to GHCR
 

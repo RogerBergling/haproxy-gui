@@ -1140,6 +1140,7 @@ dialog.modal::backdrop { background: rgba(2, 6, 15, .72); backdrop-filter: blur(
 .privacy-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 12%, transparent); }
 .build-stamp { margin-top: .5rem; font-family: var(--mono); font-size: .66rem; }
 .build-stamp a { color: var(--dim); }
+.build-stamp time { color: var(--text-soft); }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1120px) {

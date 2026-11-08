@@ -86,3 +86,6 @@ target/
 
 # Local-only private markers for scripts/verify.py (never commit real values)
 scripts/private-markers.txt
+
+# Local capture data (never commit real esxtop captures)
+/esxtop.csv

@@ -7,10 +7,13 @@ checks security headers and route behaviour, then stops the server.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -37,6 +40,25 @@ def request(url: str, method: str = "GET") -> tuple[int, dict[str, str], bytes]:
 
 def main() -> int:
     port = free_port()
+    outside = Path(tempfile.mkdtemp(prefix="haproxy-smoke-"))
+    secret = outside / "secret.txt"
+    secret.write_text("SMOKE-SECRET\n", encoding="utf-8")
+    escape_dir = ROOT / "public" / "__smoke_escape__"
+    escape_file = ROOT / "public" / "__smoke_escape__.txt"
+    symlinks_ready = True
+    try:
+        escape_dir.mkdir()
+        (escape_dir / "index.html").symlink_to(secret)
+        escape_file.symlink_to(secret)
+    except OSError:
+        symlinks_ready = False
+        with contextlib.suppress(OSError):
+            escape_file.unlink()
+        with contextlib.suppress(OSError):
+            (escape_dir / "index.html").unlink()
+        with contextlib.suppress(OSError):
+            escape_dir.rmdir()
+
     process = subprocess.Popen(
         [
             sys.executable,
@@ -119,6 +141,23 @@ def main() -> int:
         status, _, _ = request(f"{base}/", method="HEAD")
         check(status == 200, "HEAD / should return 200")
 
+        if symlinks_ready:
+            status, _, body = request(f"{base}/__smoke_escape__/")
+            check(status == 404, "directory-index symlink must not escape public/")
+            check(b"SMOKE-SECRET" not in body, "directory-index symlink exposed an outside file")
+            status, _, body = request(f"{base}/__smoke_escape__.txt")
+            check(status == 404, "file symlink must not escape public/")
+            check(b"SMOKE-SECRET" not in body, "file symlink exposed an outside file")
+
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=3) as raw:
+                raw.sendall(b"GET /%00 HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                malformed = raw.recv(4096)
+            check(malformed.startswith((b"HTTP/1.0 400", b"HTTP/1.0 404")), "malformed request must return a generic 400/404")
+            check(b"Traceback" not in malformed, "malformed request must not expose a traceback")
+        except OSError as error:
+            failures.append(f"malformed request test failed: {error}")
+
         # A request line containing an ANSI escape must not reach stderr raw.
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=3) as raw:
@@ -135,6 +174,13 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+        with contextlib.suppress(OSError):
+            escape_file.unlink()
+        with contextlib.suppress(OSError):
+            (escape_dir / "index.html").unlink()
+        with contextlib.suppress(OSError):
+            escape_dir.rmdir()
+        shutil.rmtree(outside, ignore_errors=True)
         if process.stderr:
             log_output = process.stderr.read().decode("utf-8", "replace")
 

@@ -380,6 +380,13 @@ function parseStringLiteral(actionArgs) {
   return '';
 }
 
+const VALID_MODES = new Set(['http', 'tcp']);
+
+function normalizeMode(value) {
+  const mode = String(value ?? '').trim().toLowerCase();
+  return VALID_MODES.has(mode) ? mode : '';
+}
+
 function parseItem(keyword, args, raw, line, endLine, comment) {
   const item = {
     keyword,
@@ -397,7 +404,7 @@ function parseItem(keyword, args, raw, line, endLine, comment) {
       item.binds = parseBindArgs(args);
       break;
     case 'mode':
-      item.value = args[0] || '';
+      item.value = normalizeMode(args[0]);
       break;
     case 'server':
     case 'server-template':

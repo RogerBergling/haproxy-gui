@@ -2,7 +2,7 @@
 
 # The application is a static SPA. The image contains no API, database or
 # write path and runs as an unprivileged user.
-FROM python:3.12-alpine
+FROM python:3.12-alpine@sha256:e064671ca452259bab50e8e2c7bd896e39e9a343bb06ca25234adf6fe18d0fc7
 
 ARG APP_VERSION=dev
 ARG IMAGE_TAG=local

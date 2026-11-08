@@ -19,6 +19,7 @@ import http.server
 import socket
 import sys
 import threading
+import urllib.parse
 import webbrowser
 from pathlib import Path
 
@@ -88,20 +89,65 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(404, "Not found")
         return None
 
+    @staticmethod
+    def _safe_request_path(path: str) -> bool:
+        """Reject control characters, including percent-encoded nulls."""
+        try:
+            decoded = urllib.parse.unquote(path, errors="replace")
+        except (UnicodeError, ValueError):
+            return False
+        return not any(ord(char) < 0x20 or ord(char) == 0x7F for char in decoded)
+
+    def _inside_web_root(self, path) -> bool:
+        """True only when *path* resolves to the web root or a child of it."""
+        try:
+            resolved = Path(path).resolve()
+        except (OSError, ValueError, UnicodeError):
+            return False
+        return resolved == WEB_ROOT_REAL or WEB_ROOT_REAL in resolved.parents
+
     def translate_path(self, path: str) -> str:  # noqa: N802 (stdlib naming)
         """Keep symlinks inside public/ instead of following them elsewhere."""
-        translated = super().translate_path(path)
-        resolved = Path(translated).resolve()
-        if resolved != WEB_ROOT_REAL and WEB_ROOT_REAL not in resolved.parents:
+        if not self._safe_request_path(path):
+            return str(WEB_ROOT_REAL / "__not_found__")
+        try:
+            translated = super().translate_path(path)
+        except (OSError, ValueError, UnicodeError):
+            return str(WEB_ROOT_REAL / "__not_found__")
+        if not self._inside_web_root(translated):
             return str(WEB_ROOT_REAL / "__not_found__")
         return translated
+
+    def send_head(self):
+        """Re-check directory index files after symlink resolution."""
+        path = self.translate_path(self.path)
+        try:
+            is_directory = Path(path).is_dir()
+        except (OSError, ValueError, UnicodeError):
+            is_directory = False
+        if is_directory:
+            for name in ("index.html", "index.htm"):
+                index = Path(path) / name
+                try:
+                    exists = index.exists()
+                except (OSError, ValueError, UnicodeError):
+                    exists = False
+                if exists and not self._inside_web_root(index):
+                    self.send_error(404, "Not found")
+                    return None
+        return super().send_head()
 
     def _resolve_route(self) -> None:
         # Hash routing normally means every route is "/". Send extension-less
         # paths to the app shell so direct deep links still work.
         path = self.path.split("?", 1)[0].split("#", 1)[0]
+        if not self._safe_request_path(path):
+            return
         if path not in ("/", ""):
-            candidate = (WEB_ROOT / path.lstrip("/")).resolve()
+            try:
+                candidate = (WEB_ROOT / path.lstrip("/")).resolve()
+            except (OSError, ValueError, UnicodeError):
+                return
             inside = candidate == WEB_ROOT_REAL or WEB_ROOT_REAL in candidate.parents
             if inside and not candidate.exists() and not Path(path).suffix:
                 self.path = "/"

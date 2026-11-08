@@ -107,7 +107,7 @@ function sectionCard(section, model) {
         <span class="section-type">${escape(section.type)}</span>
         <span class="section-name">${escape(sectionTitle)}</span>
         <span class="section-lines">lines ${section.line}–${section.endLine}</span>
-        ${mode ? `<span class="pill tiny">${mode}</span>` : ''}
+        ${mode ? `<span class="pill tiny">${escape(mode)}</span>` : ''}
         <span class="section-count">${section.items.length} directive${section.items.length === 1 ? '' : 's'}</span>
         <span class="chev">${icon('chevron')}</span>
       </summary>
@@ -227,7 +227,7 @@ function learningHTML(model, filter = '') {
         <div class="learn-section-title"><span class="section-type">${escape(section.type)}</span><h2>${escape(section.name || (section.type === 'global' ? 'process-wide' : section.type === 'defaults' ? 'defaults' : '(unnamed)'))}</h2><span class="section-lines">lines ${section.line}–${section.endLine}</span></div>
         ${guide ? `<p>${escape(guide.summary)}</p>` : ''}
         <div class="section-meta">
-          ${section.effectiveMode && ['frontend','backend','listen'].includes(section.type) ? `<span class="pill tiny">${section.effectiveMode.toUpperCase()}</span>` : ''}
+          ${section.effectiveMode && ['frontend','backend','listen'].includes(section.type) ? `<span class="pill tiny">${escape(section.effectiveMode.toUpperCase())}</span>` : ''}
           ${section.binds.length ? `<span class="pill tiny">${section.binds.length} bind${section.binds.length === 1 ? '' : 's'}</span>` : ''}
           ${section.servers.length ? `<span class="pill tiny">${section.servers.length} server${section.servers.length === 1 ? '' : 's'}</span>` : ''}
         </div>
@@ -253,7 +253,7 @@ function learningHTML(model, filter = '') {
   <div class="callout info">${icon('info')}<p><strong>Learning, not executing.</strong> Explanations describe the imported text and the target HAProxy 3.x semantics. Unknown directives are preserved and marked generically. Always confirm exact behavior with <code>haproxy -c</code> and the manual for your deployed branch.</p></div>`;
 }
 
-function structureHTML(model, query = '') {
+export function structureHTML(model, query = '') {
   const normalized = query.trim().toLowerCase();
   const sections = normalized
     ? model.sections

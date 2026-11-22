@@ -36,7 +36,7 @@ That is the whole installation for local use.
 1. Click **Import configuration**, or open one of the two anonymised examples.
 2. Open **Analyze** to see warnings and safe fixes.
 3. Open **Topology** to see the routing graph and simulate a request.
-4. Use **Add service** to preview a new HTTPS, HTTP/www or TLS-passthrough service.
+4. Use **Add service** to preview a new HTTPS, HTTP/www or TLS-passthrough service, with an optional source-IP allowlist that denies every other client.
 5. Use **Compare** for two files and **History** to compare or restore saved versions.
 
 Everything — parsing, analysis, topology, simulation, history and generated changes — runs in your browser. Nothing is uploaded to the server.
@@ -159,8 +159,29 @@ The guided wizard asks for the full network shape rather than hiding it:
 1. **Service type** — HTTPS website with TLS termination, HTTP/www website, or TLS passthrough by SNI
 2. **Service identity** — service name, **DNS domain**, and hostnames. Short names are combined with the domain (`app` → `app.example.com`); `@` means the apex and `*.apps` wildcards are supported.
 3. **Where it listens** — auto-detected target, an explicit existing frontend/bridge, or **create a new frontend** with explicit listen IP/interface, listen port and certificate path. Drag the new-service card onto a target or click the target.
-4. **Where traffic goes** — separate upstream IP/hostname and upstream port, upstream TLS, health check and balancing
-5. **Review** — diff, resolved listen/upstream values, style/placement explanation, current-vs-proposed routing and an interactive simulator that runs requests against the complete proposed file
+4. **Where traffic goes** — separate upstream IP/hostname and upstream port, upstream TLS, health check and balancing.
+5. **Source access control (optional)** — one or more IPv4/IPv6 source IPs or CIDRs. Empty means no restriction; otherwise the new backend allows only those sources and denies every other client (HTTP `403`, TCP connection reject).
+6. **Review** — diff, resolved listen/upstream values, style/placement explanation, current-vs-proposed routing and an interactive simulator that runs requests against the complete proposed file
+
+When an allowlist is supplied, the generated backend follows the same shape as this example:
+
+```haproxy
+backend bk_verify
+    mode http
+    balance roundrobin
+
+    # Allowed source subnets
+    acl allowed_subnets src 192.168.4.0/24 10.10.0.0/16
+
+    # Deny all other source IPs
+    http-request deny deny_status 403 unless allowed_subnets
+
+    server verify 192.168.4.40:8010
+```
+
+TCP-mode services cannot use `http-request`. They get `acl allowed_subnets src ...` plus `tcp-request content reject unless allowed_subnets` instead.
+
+Source ACLs are a network control, not authentication. HAProxy's `src` is the **immediate peer address**: behind another proxy, NAT or container network it is that device's address, and `option forwardfor` does not change it. Use PROXY protocol or an edge/frontend ACL when the proxy is not the client. A backend ACL also runs after host/SNI routing, so a denied client can still reach the listener and other services on it. The wizard warns about these consequences before applying.
 
 Generated edits follow the detected config design: indentation style, boxed or simple comments, new frontend after the last frontend, new backend after the last backend, and routes inserted before the first matching wildcard/rule or default backend. Each generated change is appended as a dated changelog entry at the top of the config, newest first, containing **HAProxy Workbench, UTC date/time, action and a use-at-your-own-risk notice**. Previous entries are preserved, so the config keeps its full modification history.
 
@@ -290,7 +311,7 @@ Open the site through the server, not as a `file://` URL, because ES modules and
 3. Inspect the **Workbench** source and structure.
 4. Open **Analyze** for findings and best-practice fixes.
 5. Open **Topology** to see the graph and simulate a request. Download it as SVG or draw.io.
-6. Use **Add service**, including the domain, listen IP/port and drag-and-drop placement, to preview a new HTTPS/HTTP/SNI route and simulate the complete proposed file.
+6. Use **Add service**, including the domain, listen IP/port, optional source CIDRs and drag-and-drop placement, to preview a new HTTPS/HTTP/SNI route and simulate the complete proposed file.
 7. Use **Compare** to compare two independent files, or **History** to compare any two saved versions.
 8. Export or download from **History** whenever you need a backup.
 
@@ -331,6 +352,7 @@ Version data was reviewed **2026-11-01**. Always check the latest patch level an
 - **Not a compiler.** The parser is structural and version-agnostic by design. Run `haproxy -c -f <file>` with the exact binary and branch that will serve traffic.
 - **Not a deployment tool.** It does not SSH, reload, call the Runtime API or push to a server.
 - **Simulation is a model.** It supports a documented ACL subset (Host/SNI/path/method/source/SSL state), assumes HTTP/1.1 semantics, does not resolve DNS or inspect certificates, and does not simulate health-check timers. Unsupported expressions are reported.
+- **Source ACLs are network policy, not authentication.** The generated `src` ACL matches the immediate peer address. Do not treat it as user identity, and do not expect `X-Forwarded-For` to influence it.
 - **Certificate/DNS/network truth is external.** The wizard can validate structure, not whether a cert covers a hostname, DNS points to the proxy or a firewall allows a port.
 - **History is local.** Clearing browser data deletes it. Export if it matters.
 - **No secrets.** Do not paste private keys, passwords or tokens.
@@ -362,6 +384,7 @@ The test suite covers:
 - SNI passthrough → loopback TLS termination → backend routing
 - Host/SNI suffix safety, named/inline ACL conditions, failure and 503 paths
 - service placement against both examples, including wildcard hosts, occupied ports and generated-config validation
+- source-ACL generation, IPv4/IPv6 CIDR validation and allow/deny simulation
 - best-practice fixes, idempotency and checklist state
 - line diff and edit-anchor behaviour
 
@@ -381,7 +404,7 @@ public/
       parser.js                # structural HAProxy parser
       analyzer.js              # explainable findings and scoring
       simulate.js              # request/ACL/simulation engine
-      wizard.js                # service placement, domain resolution and config proposal
+      wizard.js                # service placement, source ACLs, domain resolution and config proposal
       bestpractices.js         # opt-in fixes, guided HTTP checks, per-warning fixes and checklist
       style.js                 # indentation/comment/section-order detection
       change.js                # append-only dated changelog in generated configs

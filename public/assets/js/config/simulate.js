@@ -171,13 +171,62 @@ function ipv4ToNumber(ip) {
   return result >>> 0;
 }
 
+function ipv6ToBigInt(ip) {
+  let value = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!value || value.includes('%')) return null;
+
+  // Convert an embedded IPv4 tail (for example ::ffff:192.0.2.1) to groups.
+  const lastColon = value.lastIndexOf(':');
+  if (lastColon < 0) return null;
+  const tail = value.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const embedded = ipv4ToNumber(tail);
+    if (embedded === null) return null;
+    value = `${value.slice(0, lastColon + 1)}${(embedded >>> 16).toString(16)}:${(embedded & 0xffff).toString(16)}`;
+  }
+
+  const halves = value.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  if (halves.length === 1) {
+    if (left.length !== 8) return null;
+  } else if (left.length + right.length > 7) {
+    return null;
+  }
+  const groups = [...left, ...Array(8 - left.length - right.length).fill('0'), ...right];
+  if (groups.length !== 8) return null;
+
+  let result = 0n;
+  for (const group of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(group)) return null;
+    result = (result << 16n) | BigInt(parseInt(group, 16));
+  }
+  return result;
+}
+
 function ipMatches(actual, pattern) {
   const [address, prefixText] = String(pattern).split('/');
+  const actualText = String(actual);
+
+  if (actualText.includes(':') || address.includes(':')) {
+    const prefix = prefixText === undefined ? 128 : Number(prefixText);
+    const left = ipv6ToBigInt(actualText);
+    const right = ipv6ToBigInt(address);
+    if (left === null || right === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 128) {
+      return actualText === address;
+    }
+    const hostBits = BigInt(128 - prefix);
+    const allBits = (1n << 128n) - 1n;
+    const mask = allBits ^ ((1n << hostBits) - 1n);
+    return (left & mask) === (right & mask);
+  }
+
   const prefix = prefixText === undefined ? 32 : Number(prefixText);
-  const left = ipv4ToNumber(actual);
+  const left = ipv4ToNumber(actualText);
   const right = ipv4ToNumber(address);
   if (left === null || right === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
-    return String(actual) === String(address);
+    return actualText === String(address);
   }
   if (prefix === 0) return true;
   const mask = (0xffffffff << (32 - prefix)) >>> 0;

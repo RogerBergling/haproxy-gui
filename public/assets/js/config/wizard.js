@@ -39,6 +39,7 @@ export const SERVICE_KINDS = [
 
 const HOST_RE = /^(\*\.)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
 const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const MAX_SOURCE_ENTRIES = 50;
 
 function sanitizeName(value, fallback = 'service') {
   const normalized = String(value || '')
@@ -158,6 +159,81 @@ function parseAddress(value, defaultPort) {
     return { error: 'The server port must be a number between 1 and 65535.' };
   }
   return { host, port, address: host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`, warning: value.includes(':') ? null : `No port supplied; using ${port}.` };
+}
+
+function isIPv4Address(value) {
+  const parts = String(value || '').split('.');
+  return parts.length === 4 &&
+    parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+function isIPv6Address(value) {
+  if (!value || !String(value).includes(':') || String(value).includes('%')) return false;
+  try {
+    // The URL parser validates the bracketed IPv6 literal, including
+    // compression and embedded IPv4 forms.
+    const parsed = new URL(`http://[${value}]/`);
+    return parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Parse the optional source allowlist. HAProxy's `src` ACL accepts IP
+ * addresses and CIDR prefixes, not hostnames.
+ */
+function parseAllowedSources(value) {
+  const tokens = [...new Set(
+    String(value || '')
+      .split(/[\s,]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )];
+  const sources = [];
+  const errors = [];
+  if (tokens.length > MAX_SOURCE_ENTRIES) {
+    errors.push(`Add at most ${MAX_SOURCE_ENTRIES} source addresses or subnets.`);
+  }
+
+  for (const token of tokens.slice(0, MAX_SOURCE_ENTRIES)) {
+    let entry = token;
+    if (entry.startsWith('[')) {
+      const close = entry.indexOf(']');
+      if (close > 0) entry = `${entry.slice(1, close)}${entry.slice(close + 1)}`;
+    }
+    const parts = entry.split('/');
+    if (parts.length > 2 || !parts[0]) {
+      errors.push(`"${token}" is not an IPv4/IPv6 address or CIDR.`);
+      continue;
+    }
+    const address = parts[0];
+    const family = isIPv4Address(address) ? 4 : isIPv6Address(address) ? 6 : null;
+    if (!family) {
+      errors.push(`"${token}" is not a valid IPv4/IPv6 address or CIDR.`);
+      continue;
+    }
+    if (parts[1] !== undefined) {
+      const maximum = family === 4 ? 32 : 128;
+      if (!/^\d{1,3}$/.test(parts[1]) || Number(parts[1]) > maximum) {
+        errors.push(`"${token}" has an invalid prefix; IPv${family} uses 0-${maximum}.`);
+        continue;
+      }
+    }
+    const normalized = `${address.toLowerCase()}${parts[1] !== undefined ? `/${Number(parts[1])}` : ''}`;
+    if (!sources.includes(normalized)) sources.push(normalized);
+  }
+
+  return { sources, errors };
+}
+
+function isCatchAllSource(source) {
+  return source === '0.0.0.0/0' || source === '::/0';
+}
+
+function representativeSource(sources) {
+  const address = sources[0]?.split('/')[0]?.replace(/^\[|\]$/g, '');
+  return address || '203.0.113.10';
 }
 
 function entryFrontends(model, kind) {
@@ -458,6 +534,8 @@ function normalizeForm(form, model) {
   const bindAddress = String(form.bindAddress || '*').trim() || '*';
   const check = form.check !== false;
   const balance = ['roundrobin', 'leastconn', 'source', 'first'].includes(form.balance) ? form.balance : 'roundrobin';
+  const allowed = parseAllowedSources(form.allowedSources);
+  errors.push(...allowed.errors);
   return {
     kind,
     hosts,
@@ -471,8 +549,26 @@ function normalizeForm(form, model) {
     serverSsl: Boolean(form.serverSsl),
     cert: String(form.cert || '').trim(),
     target: form.target || 'auto',
+    allowedSources: allowed.sources,
     errors,
   };
+}
+
+function sourceAclLines(style, input) {
+  if (input.allowedSources.length === 0) return [];
+  const comment = (text) => `# ${style.uppercaseHeadings ? text.toUpperCase() : text}`;
+  const action = input.kind === 'tcp'
+    ? 'tcp-request content reject unless allowed_subnets'
+    : 'http-request deny deny_status 403 unless allowed_subnets';
+  return [
+    '',
+    comment('Allowed source subnets'),
+    `acl allowed_subnets src ${input.allowedSources.join(' ')}`,
+    '',
+    comment('Deny all other source IPs'),
+    action,
+    '',
+  ];
 }
 
 /**
@@ -642,6 +738,7 @@ export function buildServicePlan(model, form) {
   const backendDirectives = [
     `mode ${input.kind === 'tcp' ? 'tcp' : 'http'}`,
     `balance ${input.balance}`,
+    ...sourceAclLines(style, input),
     `server ${serverName} ${serverAddress}${serverFlags ? ` ${serverFlags}` : ''}`,
   ];
   const backendBlock = [
@@ -650,10 +747,13 @@ export function buildServicePlan(model, form) {
       `Service: ${input.hosts.join(', ')}`,
       `Upstream: ${serverAddress}`,
       `Mode: ${input.kind === 'tcp' ? 'TCP' : 'HTTP'}`,
+      input.allowedSources.length
+        ? `Source ACL: ${input.allowedSources.join(', ')}; all other sources denied`
+        : '',
       'Managed by HAProxy Workbench',
     ]),
     `backend ${backendName}`,
-    ...styleLines(style, backendDirectives.map((line) => `\t${line}`)),
+    ...styleLines(style, backendDirectives.map((line) => (line ? `\t${line}` : ''))),
   ];
   edits.push({ type: 'insert', line: backendInsertionLine(model), lines: backendBlock });
   additions.push(...backendBlock);
@@ -676,6 +776,19 @@ export function buildServicePlan(model, form) {
   }
   if (newFrontend) {
     warnings.push(`A new frontend is created on ${bind}. Update DNS/firewall/service exposure and validate that the address and port are not managed outside this config.`);
+  }
+  if (input.allowedSources.length > 0) {
+    warnings.push(
+      'The source ACL uses `src`, which is the immediate peer address. Behind another proxy, NAT or container network it is that device\'s address; `option forwardfor` does not change it. Use PROXY protocol or an edge ACL when the proxy is not the client.',
+    );
+    if (input.kind === 'tcp') {
+      warnings.push('TCP source restrictions reject the connection; clients see a reset/refused connection rather than an HTTP 403.');
+    } else {
+      warnings.push('The source ACL is enforced in the new backend after host/SNI routing. Disallowed clients can still reach the listener and any other service on it; add a frontend ACL if the block must happen before routing.');
+    }
+    if (input.allowedSources.some(isCatchAllSource)) {
+      warnings.push('A /0 allowlist entry covers every address, so the deny rule cannot block any source.');
+    }
   }
 
   if (errors.length === 0) {
@@ -702,9 +815,15 @@ export function buildServicePlan(model, form) {
       previewPort = bind?.port || input.entryPort;
     }
   }
+  const requestSource = input.allowedSources.length > 0
+    ? representativeSource(input.allowedSources)
+    : '203.0.113.10';
   const request = input.kind === 'tcp'
-    ? { scheme: 'tcp', host: primaryHost, sni: primaryHost, port: previewPort, path: '', method: 'GET' }
-    : { scheme: input.kind === 'https' ? 'https' : 'http', host: primaryHost, sni: primaryHost, port: previewPort, path: '/', method: 'GET' };
+    ? { scheme: 'tcp', host: primaryHost, sni: primaryHost, port: previewPort, path: '', method: 'GET', source: requestSource }
+    : { scheme: input.kind === 'https' ? 'https' : 'http', host: primaryHost, sni: primaryHost, port: previewPort, path: '/', method: 'GET', source: requestSource };
+  const sourceSummary = input.allowedSources.length > 0
+    ? ` Source access is limited to ${input.allowedSources.length} subnet${input.allowedSources.length === 1 ? '' : 's'}; all other source addresses are denied.`
+    : '';
 
   return {
     ok: errors.length === 0,
@@ -721,17 +840,24 @@ export function buildServicePlan(model, form) {
     bind: { address: bindHost, port: input.entryPort, raw: bind },
     style,
     styleLabel: describeStyle(style),
+    sourceAcl: {
+      enabled: input.allowedSources.length > 0,
+      sources: input.allowedSources,
+      action: input.kind === 'tcp'
+        ? 'tcp-request content reject unless allowed_subnets'
+        : 'http-request deny deny_status 403 unless allowed_subnets',
+    },
     placementLabel: newFrontend
       ? 'New frontend after the last frontend; backend after the last backend; comments follow the detected style.'
       : 'Route inserted before the first matching rule/default; backend after the last backend; comments follow the detected style.',
     proposed: ensureTrailingNewline(proposed),
     additions,
     request,
-    summary: newFrontend
+    summary: `${newFrontend
       ? `Create a new ${input.kind === 'https' ? 'HTTPS' : input.kind === 'http' ? 'HTTP/www' : 'TCP/TLS passthrough'} frontend on ${bind} and backend ${backendName}.`
       : target.kind === 'bridge'
         ? `Route ${input.hosts.join(', ')} through ${target.edgeFrontend.name} → ${target.frontend.name} to new backend ${backendName}.`
-        : `Route ${input.hosts.join(', ')} at ${routeFrontend.name} to new backend ${backendName}.`,
+        : `Route ${input.hosts.join(', ')} at ${routeFrontend.name} to new backend ${backendName}.`}${sourceSummary}`,
   };
 }
 

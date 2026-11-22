@@ -64,7 +64,7 @@ function bindProposedSim(container, plan) {
       <label class="field"><span>SNI</span><input name="sni" value="${esc(request.sni || request.host)}" autocomplete="off"></label>
       <label class="field"><span>Port</span><input name="port" value="${esc(request.port)}" inputmode="numeric" autocomplete="off"></label>
       <label class="field"><span>Path</span><input name="path" value="${esc(request.path || '/')}" autocomplete="off"></label>
-      <label class="field"><span>Source</span><input name="source" value="203.0.113.10" autocomplete="off"></label>
+      <label class="field"><span>Source</span><input name="source" value="${esc(request.source || '203.0.113.10')}" autocomplete="off"></label>
       <button class="btn btn-primary btn-sm" type="submit">${icon('shuffle')}Run against new file</button>
     </form>
     <div class="proposed-sim-output" data-proposed-sim-output></div>`;
@@ -224,6 +224,15 @@ export async function renderServices(view, query) {
             </select></label>
             <label class="field checkbox-field"><span>Upstream speaks TLS</span><input name="serverSsl" type="checkbox"><small>Adds <code>ssl</code> to the server line. Certificate verification still needs an explicit policy.</small></label>
             <label class="field checkbox-field span-2"><span>Enable TCP health check</span><input name="check" type="checkbox" checked><small>Adds <code>check inter 5s fall 3 rise 3</code>. Use an HTTP health endpoint for application-level readiness.</small></label>
+          </div>
+        </fieldset>
+
+        <div class="section-head small"><div><span class="eyebrow">Step 5</span><h2>Who may connect?</h2></div></div>
+        <fieldset class="form-section">
+          <legend>Source access control (optional)</legend>
+          <p class="form-section-note">Restrict the new backend to known source networks. Leave empty to accept all sources.</p>
+          <div class="form-grid">
+            <label class="field span-2"><span>Allowed source IPs / subnets</span><textarea name="allowedSources" rows="2" placeholder="192.168.4.0/24 10.10.0.0/16" autocomplete="off"></textarea><small>When set, the new backend adds <code>acl allowed_subnets src ...</code> and denies every other source: HTTP/HTTPS with <code>403</code>, TCP with a connection reject. Separate entries with spaces, commas or new lines.</small></label>
           </div>
         </fieldset>
 
@@ -459,6 +468,7 @@ export async function renderServices(view, query) {
     cert: form.elements.cert.value,
     serverSsl: form.elements.serverSsl.checked,
     check: form.elements.check.checked,
+    allowedSources: form.elements.allowedSources.value,
   });
 
   const simulatePlan = (plan) => {
@@ -487,7 +497,7 @@ export async function renderServices(view, query) {
     preview.innerHTML = `
       <div class="preview-head">
         <div>
-          <span class="eyebrow">Step 5 · Review</span>
+          <span class="eyebrow">Step 6 · Review</span>
           <h2>${esc(plan.summary)}</h2>
           <p>${target ? esc(target.detail) : `No existing frontend fits this service type; a new frontend ${esc(plan.newFrontendName || '')} will be generated on ${esc(plan.bind.raw)}. Review the address and certificate path carefully.`}</p>
         </div>
@@ -501,11 +511,13 @@ export async function renderServices(view, query) {
         <span><strong>Upstream</strong>${esc(plan.form.server.address || '—')}</span>
         <span><strong>Mode</strong>${plan.kind === 'tcp' ? 'TCP / SNI' : plan.kind === 'https' ? 'HTTP + TLS termination' : 'HTTP'}</span>
         <span><strong>Upstream TLS</strong>${plan.form.serverSsl ? 'yes' : 'no'}</span>
+        <span><strong>Source ACL</strong>${plan.sourceAcl.enabled ? `${plan.sourceAcl.sources.length} subnet${plan.sourceAcl.sources.length === 1 ? '' : 's'}, deny others` : 'none'}</span>
         <span><strong>Config style</strong>${esc(plan.styleLabel)}</span>
       </div>
 
       ${plan.errors.length ? `<div class="callout danger">${icon('error')}<div><strong>Fix these before applying</strong><ul>${plan.errors.map((error) => `<li>${esc(error)}</li>`).join('')}</ul></div></div>` : ''}
       ${plan.warnings.length ? `<div class="callout warn">${icon('warning')}<div><strong>Review these consequences</strong><ul>${plan.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div></div>` : ''}
+      ${plan.sourceAcl.enabled ? `<div class="callout info">${icon('lock')}<div><strong>Source allowlist generated</strong><p>Only ${esc(plan.sourceAcl.sources.join(', '))} are allowed; every other source is denied at ${esc(plan.backendName)}. The preview request uses <code>${esc(plan.request.source)}</code>. Change <strong>Source</strong> under New file simulation to test a denied client.</p></div></div>` : ''}
 
       <div class="impact-grid">
         <div class="impact-card"><span>Score</span><strong>${initialAnalysis.score} → ${proposedAnalysis.score}</strong><small>${initialAnalysis.grade} → ${proposedAnalysis.grade}</small></div>
@@ -570,6 +582,9 @@ export async function renderServices(view, query) {
         latestPlan.summary,
         `Listen: ${latestPlan.newFrontend ? latestPlan.bind.raw : latestPlan.target?.frontend?.binds?.map((bind) => bind.raw).join(', ')}`,
         `Upstream: ${latestPlan.form.server.address}.`,
+        latestPlan.sourceAcl.enabled
+          ? `Source ACL: only ${latestPlan.sourceAcl.sources.join(', ')}; all other sources are denied.`
+          : 'Source ACL: none.',
         `Simulation: ${resultBadge(currentResult).label} → ${resultBadge(proposedResult).label}.`,
         `${latestPlan.warnings.length} review note(s) will be preserved in the history entry.`,
       ],

@@ -109,6 +109,79 @@ test('supports wildcard hostnames with a suffix condition', () => {
   assert.match(plan.proposed, /server wild 192\.0\.2\.71:8443 .*ssl/);
 });
 
+test('generates an HTTP source allowlist and denies every other client', () => {
+  const model = parseConfig(sampleB);
+  const plan = buildServicePlan(model, {
+    kind: 'https',
+    name: 'verify',
+    hosts: 'verify.example.com',
+    server: '192.168.4.40:8010',
+    allowedSources: '192.168.4.0/24 10.10.0.0/16',
+  });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.sourceAcl.enabled, true);
+  assert.deepEqual(plan.sourceAcl.sources, ['192.168.4.0/24', '10.10.0.0/16']);
+  assert.match(
+    plan.proposed,
+    /backend bk_verify\n\s+mode http\n\s+balance roundrobin\n\n\s+# Allowed source subnets\n\s+acl allowed_subnets src 192\.168\.4\.0\/24 10\.10\.0\.0\/16\n\n\s+# Deny all other source IPs\n\s+http-request deny deny_status 403 unless allowed_subnets\n\n\s+server verify 192\.168\.4\.40:8010/,
+  );
+
+  const proposed = parseConfig(plan.proposed);
+  assert.equal(proposed.issues.filter((issue) => issue.severity === 'error').length, 0);
+  const allowed = simulateRequest(proposed, { ...plan.request, source: '192.168.4.50' });
+  assert.equal(allowed.code, 200);
+  assert.equal(allowed.backend, 'bk_verify');
+  const denied = simulateRequest(proposed, { ...plan.request, source: '203.0.113.10' });
+  assert.equal(denied.code, 403);
+  assert.match(denied.summary, /bk_verify/);
+});
+
+test('generates a TCP source allowlist with an IPv6 CIDR', () => {
+  const model = parseConfig(sampleA);
+  const plan = buildServicePlan(model, {
+    kind: 'tcp',
+    name: 'database',
+    hosts: 'db.example.net',
+    server: '192.0.2.62:5432',
+    allowedSources: '2001:db8::/32',
+  });
+  assert.equal(plan.ok, true);
+  assert.match(plan.proposed, /acl allowed_subnets src 2001:db8::\/32/);
+  assert.match(plan.proposed, /tcp-request content reject unless allowed_subnets/);
+  assert.doesNotMatch(plan.proposed, /http-request deny deny_status 403 unless allowed_subnets/);
+
+  const proposed = parseConfig(plan.proposed);
+  const allowed = simulateRequest(proposed, { ...plan.request, source: '2001:db8::10' });
+  assert.equal(allowed.outcome, 'tunnel');
+  assert.equal(allowed.backend, 'bk_database');
+  const denied = simulateRequest(proposed, { ...plan.request, source: '2001:db9::10' });
+  assert.equal(denied.outcome, 'reset');
+  assert.equal(denied.backend, 'bk_database');
+});
+
+test('validates source CIDRs and adds no ACL when the list is empty', () => {
+  const model = parseConfig(sampleB);
+  const base = {
+    kind: 'https',
+    name: 'verify',
+    hosts: 'verify.example.com',
+    server: '192.168.4.40:8010',
+  };
+  const unrestricted = buildServicePlan(model, base);
+  assert.equal(unrestricted.ok, true);
+  assert.equal(unrestricted.sourceAcl.enabled, false);
+  assert.doesNotMatch(unrestricted.proposed, /allowed_subnets/);
+
+  const invalid = buildServicePlan(model, { ...base, allowedSources: '10.0.0.0/33, not-an-address' });
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.errors.some((error) => /invalid prefix/i.test(error)));
+  assert.ok(invalid.errors.some((error) => /valid IPv4\/IPv6/i.test(error)));
+
+  const catchAll = buildServicePlan(model, { ...base, allowedSources: '0.0.0.0/0' });
+  assert.equal(catchAll.ok, true);
+  assert.ok(catchAll.warnings.some((warning) => /cannot block any source/i.test(warning)));
+});
+
 test('refuses a new frontend on an occupied port', () => {
   const model = parseConfig(sampleB);
   const plan = buildServicePlan(model, {

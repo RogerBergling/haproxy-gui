@@ -95,6 +95,25 @@ frontend fe
   assert.ok(model.issues.some((issue) => issue.code === 'frontend-no-routing') === false);
 });
 
+test('parses deny_status on http-request deny', () => {
+  const model = parseConfig(`global
+defaults
+    mode http
+frontend fe
+    bind *:80
+    default_backend bk
+backend bk
+    acl allowed_subnets src 192.0.2.0/24
+    http-request deny deny_status 429 unless allowed_subnets
+    server app 192.0.2.10:80
+`);
+  const action = model.backends[0].actions.find((item) => item.keyword === 'http-request');
+  assert.equal(action.action, 'deny');
+  assert.equal(action.status, 429);
+  assert.deepEqual(action.condition, ['allowed_subnets']);
+  assert.equal(action.negate, true);
+});
+
 test('models a listen section as both frontend and backend', () => {
   const model = parseConfig(`global
 defaults

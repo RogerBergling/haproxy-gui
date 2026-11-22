@@ -367,7 +367,7 @@ function parseActionCondition(args) {
 }
 
 function parseStatus(actionArgs) {
-  const index = actionArgs.indexOf('status');
+  const index = actionArgs.findIndex((token) => token === 'status' || token === 'deny_status');
   if (index >= 0 && actionArgs[index + 1] && /^\d{3}$/.test(actionArgs[index + 1])) {
     return Number(actionArgs[index + 1]);
   }

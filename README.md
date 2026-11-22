@@ -42,6 +42,27 @@ Open **<http://localhost:8004>**.
 
 That is the whole installation for local use.
 
+### Theme modes
+
+`APP_THEME` sets the first-visit theme. The theme toggle saves the visitor's
+explicit choice, which overrides this default.
+
+| Value | Behavior |
+|---|---|
+| `dark` | Dark “control room” theme (default) |
+| `light` | Light/white theme |
+| `system` | Follow the browser/OS `prefers-color-scheme` |
+
+Set it in `.env` or Compose:
+
+```yaml
+environment:
+  APP_THEME: ${APP_THEME:-dark}
+```
+
+Invalid values fall back to `dark`. The default is served by `/theme.js` and
+applied before first paint, so there is no theme flash.
+
 ### First five minutes
 
 1. Click **Import configuration**, or open one of the two anonymised examples.
@@ -71,21 +92,25 @@ Want the full feature tour first? [See what it does](#what-it-does) or jump to t
 
 ## Screenshots
 
-| Home | Workbench |
+| Home (dark) | Home (light) |
 |---|---|
-| ![Home](docs/screenshots/home.png) | ![Workbench](docs/screenshots/workbench.png) |
+| ![Home in dark theme](docs/screenshots/home.png) | ![Home in light theme](docs/screenshots/home-light.png) |
 
-| Analysis | Topology |
+| Workbench | Analysis |
 |---|---|
-| ![Analysis](docs/screenshots/analyze.png) | ![Topology](docs/screenshots/topology.png) |
+| ![Workbench](docs/screenshots/workbench.png) | ![Analysis](docs/screenshots/analyze.png) |
 
-| Service wizard | Learning mode |
+| Topology | Service wizard |
 |---|---|
-| ![Service wizard](docs/screenshots/services.png) | ![Learning mode](docs/screenshots/learning.png) |
+| ![Topology](docs/screenshots/topology.png) | ![Service wizard](docs/screenshots/services.png) |
 
-| Compare files | Warning fix with old/new config review |
+| Learning mode | Compare files |
 |---|---|
-| ![Compare files](docs/screenshots/compare.png) | ![Warning fix](docs/screenshots/fix-dialog.png) |
+| ![Learning mode](docs/screenshots/learning.png) | ![Compare files](docs/screenshots/compare.png) |
+
+| Warning fix with old/new config review |
+|---|
+| ![Warning fix](docs/screenshots/fix-dialog.png) |
 
 ![Security model](docs/screenshots/security.png)
 

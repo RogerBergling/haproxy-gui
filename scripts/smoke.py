@@ -117,6 +117,10 @@ def main() -> int:
             status, _, _ = request(base + asset)
             check(status == 200, f"{asset} should return 200")
 
+        status, _, raw = request(f"{base}/theme.js")
+        check(status == 200, "theme.js should return 200")
+        check(b"window.__APP_THEME__" in raw, "theme.js should expose window.__APP_THEME__")
+
         status, _, raw = request(f"{base}/version.json")
         check(status == 200, "version.json should return 200")
         try:

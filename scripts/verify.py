@@ -142,6 +142,8 @@ def main() -> int:
 
     check("/assets/css/app.css" in index, "index.html must reference the local stylesheet")
     check("/assets/js/app.js" in index, "index.html must reference the local app module")
+    check("/assets/js/theme-init.js" in index, "index.html must load the pre-paint theme init")
+    check("/theme.js" in index, "index.html must load the runtime theme default")
     check(
         not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", index),
         "index.html must not contain inline scripts (CSP script-src 'self')",

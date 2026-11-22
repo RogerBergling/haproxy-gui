@@ -16,6 +16,7 @@ import argparse
 import contextlib
 import functools
 import http.server
+import os
 import socket
 import sys
 import threading
@@ -27,6 +28,19 @@ ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "public"
 WEB_ROOT_REAL = WEB_ROOT.resolve()
 PORT_RANGE = range(8080, 8100)
+
+APP_THEME_VALUES = {"dark", "light", "system"}
+APP_THEME_ALIASES = {"auto": "system", "white": "light"}
+
+
+def _theme_default() -> str:
+    value = os.environ.get("APP_THEME", "dark").strip().lower()
+    value = APP_THEME_ALIASES.get(value, value)
+    return value if value in APP_THEME_VALUES else "dark"
+
+
+APP_THEME = _theme_default()
+THEME_JS = f'window.__APP_THEME__ = "{APP_THEME}";\n'
 
 NO_CACHE = "no-store, no-cache, must-revalidate, max-age=0"
 
@@ -152,11 +166,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if inside and not candidate.exists() and not Path(path).suffix:
                 self.path = "/"
 
+    def _serve_theme(self) -> None:
+        """Serve the first-visit theme without a static file or auth gate."""
+        body = THEME_JS.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
+        if self.path.split("?", 1)[0].split("#", 1)[0] == "/theme.js":
+            self._serve_theme()
+            return
         self._resolve_route()
         super().do_GET()
 
     def do_HEAD(self) -> None:  # noqa: N802 (stdlib naming)
+        if self.path.split("?", 1)[0].split("#", 1)[0] == "/theme.js":
+            self._serve_theme()
+            return
         self._resolve_route()
         super().do_HEAD()
 

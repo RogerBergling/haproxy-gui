@@ -26,6 +26,9 @@ services:
     # Pin a reviewed digest in production. Update explicitly with `docker compose pull`.
     pull_policy: if_not_present
     read_only: true
+    environment:
+      # First-visit theme: dark, light or system. A saved toggle choice wins.
+      APP_THEME: ${APP_THEME:-dark}
     tmpfs:
       - /tmp:size=8m
     security_opt:

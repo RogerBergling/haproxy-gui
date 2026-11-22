@@ -177,9 +177,64 @@ test('validates source CIDRs and adds no ACL when the list is empty', () => {
   assert.ok(invalid.errors.some((error) => /invalid prefix/i.test(error)));
   assert.ok(invalid.errors.some((error) => /valid IPv4\/IPv6/i.test(error)));
 
-  const catchAll = buildServicePlan(model, { ...base, allowedSources: '0.0.0.0/0' });
-  assert.equal(catchAll.ok, true);
-  assert.ok(catchAll.warnings.some((warning) => /cannot block any source/i.test(warning)));
+  for (const catchAll of ['0.0.0.0/0', '::/0', '::0/0', '0:0:0:0:0:0:0:0/0']) {
+    const plan = buildServicePlan(model, { ...base, allowedSources: catchAll });
+    assert.equal(plan.ok, false, `${catchAll} must be rejected`);
+    assert.ok(plan.errors.some((error) => /allows every IPv/i.test(error)));
+    assert.doesNotMatch(plan.proposed, /acl allowed_subnets/);
+  }
+});
+
+test('rejects a source allowlist when the backend would see a loopback peer', () => {
+  const bridgeModel = parseConfig(sampleA);
+  const bridge = buildServicePlan(bridgeModel, {
+    kind: 'https',
+    name: 'verify',
+    hosts: 'verify.example.com',
+    server: '192.168.4.40:8010',
+    allowedSources: '192.168.4.0/24',
+  });
+  assert.equal(bridge.ok, false);
+  assert.equal(bridge.sourceAcl.blocked, true);
+  assert.ok(bridge.errors.some((error) => /loopback/i.test(error)));
+  assert.ok(bridge.errors.some((error) => /127\.0\.0\.1/i.test(error)));
+  assert.doesNotMatch(bridge.proposed, /acl allowed_subnets/);
+
+  const loopbackFrontend = buildServicePlan(parseConfig(sampleB), {
+    kind: 'https',
+    name: 'internal',
+    hosts: 'internal.example.com',
+    server: '192.0.2.50:9000',
+    target: 'new',
+    bindAddress: '127.0.0.1',
+    entryPort: '9443',
+    cert: '/etc/haproxy/certs/internal.pem',
+    allowedSources: '192.168.4.0/24',
+  });
+  assert.equal(loopbackFrontend.ok, false);
+  assert.equal(loopbackFrontend.sourceAcl.blocked, true);
+  assert.ok(loopbackFrontend.errors.some((error) => /loopback/i.test(error)));
+});
+
+test('rejects source tokens that could break the generated configuration', () => {
+  const model = parseConfig(sampleB);
+  const base = {
+    kind: 'https',
+    name: 'verify',
+    hosts: 'verify.example.com',
+    server: '192.168.4.40:8010',
+  };
+  for (const value of [
+    '192.0.2.0/24#comment',
+    '192.0.2.0/24; deny',
+    '192.0.2.0/24/8',
+    '"192.0.2.0/24"',
+    '192.0.2.0/24\nacl injected src 0.0.0.0/0',
+  ]) {
+    const plan = buildServicePlan(model, { ...base, allowedSources: value });
+    assert.equal(plan.ok, false, `${JSON.stringify(value)} must be rejected`);
+    assert.doesNotMatch(plan.proposed, /acl injected/);
+  }
 });
 
 test('refuses a new frontend on an occupied port', () => {

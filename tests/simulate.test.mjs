@@ -53,6 +53,52 @@ test('rejects unknown SNI via the TCP default backend', () => {
   assert.equal(result.ok, false);
 });
 
+test('models the loopback source rewrite for backend src ACLs', () => {
+  const config = (proxyProtocol) => `global
+defaults
+    mode tcp
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+frontend edge
+    bind *:443
+    mode tcp
+    use_backend bk_bridge if { req_ssl_sni -i app.example.com }
+    default_backend bk_bridge
+backend bk_bridge
+    mode tcp
+    server term 127.0.0.1:8443${proxyProtocol ? ' send-proxy-v2' : ''}
+frontend term
+    bind 127.0.0.1:8443 ssl crt /etc/haproxy/certs/app.pem${proxyProtocol ? ' accept-proxy' : ''}
+    mode http
+    default_backend bk_app
+backend bk_app
+    mode http
+    acl allowed_subnets src 192.168.4.0/24
+    http-request deny deny_status 403 unless allowed_subnets
+    server app 192.0.2.10:80
+`;
+
+  const request = {
+    scheme: 'https',
+    host: 'app.example.com',
+    sni: 'app.example.com',
+    port: '443',
+    source: '192.168.4.50',
+  };
+
+  const withoutProxy = simulateRequest(parseConfig(config(false)), request);
+  assert.equal(withoutProxy.code, 403);
+  assert.equal(withoutProxy.backend, 'bk_app');
+  assert.ok(withoutProxy.steps.some((step) => step.kind === 'source' && /127\.0\.0\.1/.test(step.title)));
+  assert.ok(withoutProxy.warnings.some((warning) => /does not preserve the client source/i.test(warning)));
+
+  const withProxy = simulateRequest(parseConfig(config(true)), request);
+  assert.equal(withProxy.code, 200);
+  assert.equal(withProxy.backend, 'bk_app');
+  assert.ok(withProxy.steps.some((step) => step.kind === 'source' && /preserved/i.test(step.title)));
+});
+
 test('simulates sample B over HTTPS and HTTP', () => {
   const model = parseConfig(sampleB);
   const httpsResult = simulateRequest(model, {

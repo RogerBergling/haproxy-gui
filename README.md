@@ -160,7 +160,7 @@ The guided wizard asks for the full network shape rather than hiding it:
 2. **Service identity** — service name, **DNS domain**, and hostnames. Short names are combined with the domain (`app` → `app.example.com`); `@` means the apex and `*.apps` wildcards are supported.
 3. **Where it listens** — auto-detected target, an explicit existing frontend/bridge, or **create a new frontend** with explicit listen IP/interface, listen port and certificate path. Drag the new-service card onto a target or click the target.
 4. **Where traffic goes** — separate upstream IP/hostname and upstream port, upstream TLS, health check and balancing.
-5. **Source access control (optional)** — one or more IPv4/IPv6 source IPs or CIDRs. Empty means no restriction; otherwise the new backend allows only those sources and denies every other client (HTTP `403`, TCP connection reject).
+5. **Backend source allowlist (optional)** — one or more IPv4/IPv6 source IPs or CIDRs. Empty means no restriction; otherwise the new backend allows only those sources and denies every other request (HTTP `403`, TCP at the content stage).
 6. **Review** — diff, resolved listen/upstream values, style/placement explanation, current-vs-proposed routing and an interactive simulator that runs requests against the complete proposed file
 
 When an allowlist is supplied, the generated backend follows the same shape as this example:
@@ -181,7 +181,11 @@ backend bk_verify
 
 TCP-mode services cannot use `http-request`. They get `acl allowed_subnets src ...` plus `tcp-request content reject unless allowed_subnets` instead.
 
-Source ACLs are a network control, not authentication. HAProxy's `src` is the **immediate peer address**: behind another proxy, NAT or container network it is that device's address, and `option forwardfor` does not change it. Use PROXY protocol or an edge/frontend ACL when the proxy is not the client. A backend ACL also runs after host/SNI routing, so a denied client can still reach the listener and other services on it. The wizard warns about these consequences before applying.
+The allowlist is a **backend request control, not an edge firewall**. Disallowed clients can still reach the listener and other services on it. For HTTP, the `403` happens after host/SNI routing; for TCP, rejection happens when content is available, so it does not prevent connection floods or idle connections. Use an entry-frontend ACL when the restriction must happen before routing or at connection accept.
+
+The wizard **refuses to add a backend source allowlist** when the service is placed behind a loopback TLS hand-off (including the included SNI bridge) or targets a frontend with a loopback bind. In that architecture HAProxy itself is the immediate peer, so `src` would evaluate `127.0.0.1`/`::1` instead of the client. Use an entry-frontend ACL; if you add PROXY protocol manually end-to-end, verify the resulting `src` value before relying on it. A `/0` entry is rejected; leave the field empty to disable the restriction.
+
+Source ACLs are a network control, not authentication. HAProxy's `src` is the **immediate peer address**: behind another proxy, NAT or container network it is that device's address, and `option forwardfor` does not change it. Use PROXY protocol or an edge/frontend ACL when the proxy is not the client. The wizard displays these consequences before applying.
 
 Generated edits follow the detected config design: indentation style, boxed or simple comments, new frontend after the last frontend, new backend after the last backend, and routes inserted before the first matching wildcard/rule or default backend. Each generated change is appended as a dated changelog entry at the top of the config, newest first, containing **HAProxy Workbench, UTC date/time, action and a use-at-your-own-risk notice**. Previous entries are preserved, so the config keeps its full modification history.
 
@@ -352,7 +356,7 @@ Version data was reviewed **2026-11-01**. Always check the latest patch level an
 - **Not a compiler.** The parser is structural and version-agnostic by design. Run `haproxy -c -f <file>` with the exact binary and branch that will serve traffic.
 - **Not a deployment tool.** It does not SSH, reload, call the Runtime API or push to a server.
 - **Simulation is a model.** It supports a documented ACL subset (Host/SNI/path/method/source/SSL state), assumes HTTP/1.1 semantics, does not resolve DNS or inspect certificates, and does not simulate health-check timers. Unsupported expressions are reported.
-- **Source ACLs are network policy, not authentication.** The generated `src` ACL matches the immediate peer address. Do not treat it as user identity, and do not expect `X-Forwarded-For` to influence it.
+- **Source ACLs are backend network policy, not authentication or an edge firewall.** The generated `src` ACL matches the immediate peer address and runs after routing. Do not treat it as user identity, and do not expect `X-Forwarded-For` to influence it. Loopback and bridge placements are rejected for source ACLs.
 - **Certificate/DNS/network truth is external.** The wizard can validate structure, not whether a cert covers a hostname, DNS points to the proxy or a firewall allows a port.
 - **History is local.** Clearing browser data deletes it. Export if it matters.
 - **No secrets.** Do not paste private keys, passwords or tokens.
@@ -384,7 +388,7 @@ The test suite covers:
 - SNI passthrough → loopback TLS termination → backend routing
 - Host/SNI suffix safety, named/inline ACL conditions, failure and 503 paths
 - service placement against both examples, including wildcard hosts, occupied ports and generated-config validation
-- source-ACL generation, IPv4/IPv6 CIDR validation and allow/deny simulation
+- source-ACL generation, IPv4/IPv6 CIDR validation, `/0` rejection, loopback source rewriting and allow/deny simulation
 - best-practice fixes, idempotency and checklist state
 - line diff and edit-anchor behaviour
 

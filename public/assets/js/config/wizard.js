@@ -219,16 +219,16 @@ function parseAllowedSources(value) {
         errors.push(`"${token}" has an invalid prefix; IPv${family} uses 0-${maximum}.`);
         continue;
       }
+      if (Number(parts[1]) === 0) {
+        errors.push(`"${token}" allows every IPv${family} address (/0). Leave the allowlist empty instead, or choose a narrower prefix.`);
+        continue;
+      }
     }
     const normalized = `${address.toLowerCase()}${parts[1] !== undefined ? `/${Number(parts[1])}` : ''}`;
     if (!sources.includes(normalized)) sources.push(normalized);
   }
 
   return { sources, errors };
-}
-
-function isCatchAllSource(source) {
-  return source === '0.0.0.0/0' || source === '::/0';
 }
 
 function representativeSource(sources) {
@@ -606,6 +606,17 @@ export function buildServicePlan(model, form) {
   const routeFrontend = target ? target.frontend : null;
   const newFrontend = forceNewFrontend || !target;
   const newFrontendName = newFrontend ? uniqueName(`ft_${input.name}`, existingNames, '') : null;
+  const loopbackPlacement = Boolean(
+    target?.kind === 'bridge' ||
+    target?.loopback ||
+    target?.frontend?.binds?.some((bind) => isLoopbackHost(bind.host)) ||
+    (newFrontend && isLoopbackHost(input.bindAddress))
+  );
+  if (input.allowedSources.length > 0 && loopbackPlacement) {
+    errors.push(
+      'The selected placement hands traffic to the backend over loopback, or the target frontend has a loopback bind. A backend `src` ACL would see 127.0.0.1/::1 instead of the client, so the allowlist cannot work. Remove the allowlist, choose a public target without a loopback hand-off, or put a host/SNI-scoped ACL on the entry frontend. PROXY protocol must be configured and verified manually.',
+    );
+  }
   const cert = input.cert || `/etc/haproxy/certs/${input.domain || input.name}.pem`;
   const bindHost = formatBindHost(input.bindAddress);
   const bind = `${bindHost}:${input.entryPort}`;
@@ -738,7 +749,7 @@ export function buildServicePlan(model, form) {
   const backendDirectives = [
     `mode ${input.kind === 'tcp' ? 'tcp' : 'http'}`,
     `balance ${input.balance}`,
-    ...sourceAclLines(style, input),
+    ...(loopbackPlacement ? [] : sourceAclLines(style, input)),
     `server ${serverName} ${serverAddress}${serverFlags ? ` ${serverFlags}` : ''}`,
   ];
   const backendBlock = [
@@ -747,7 +758,7 @@ export function buildServicePlan(model, form) {
       `Service: ${input.hosts.join(', ')}`,
       `Upstream: ${serverAddress}`,
       `Mode: ${input.kind === 'tcp' ? 'TCP' : 'HTTP'}`,
-      input.allowedSources.length
+      input.allowedSources.length && !loopbackPlacement
         ? `Source ACL: ${input.allowedSources.join(', ')}; all other sources denied`
         : '',
       'Managed by HAProxy Workbench',
@@ -777,17 +788,13 @@ export function buildServicePlan(model, form) {
   if (newFrontend) {
     warnings.push(`A new frontend is created on ${bind}. Update DNS/firewall/service exposure and validate that the address and port are not managed outside this config.`);
   }
-  if (input.allowedSources.length > 0) {
+  if (input.allowedSources.length > 0 && !loopbackPlacement) {
     warnings.push(
       'The source ACL uses `src`, which is the immediate peer address. Behind another proxy, NAT or container network it is that device\'s address; `option forwardfor` does not change it. Use PROXY protocol or an edge ACL when the proxy is not the client.',
     );
+    warnings.push('This is a backend request ACL, not an edge firewall: disallowed clients can still reach the listener and other services on it. Use a frontend ACL if the restriction must happen before routing.');
     if (input.kind === 'tcp') {
-      warnings.push('TCP source restrictions reject the connection; clients see a reset/refused connection rather than an HTTP 403.');
-    } else {
-      warnings.push('The source ACL is enforced in the new backend after host/SNI routing. Disallowed clients can still reach the listener and any other service on it; add a frontend ACL if the block must happen before routing.');
-    }
-    if (input.allowedSources.some(isCatchAllSource)) {
-      warnings.push('A /0 allowlist entry covers every address, so the deny rule cannot block any source.');
+      warnings.push('TCP source restrictions run at the content stage, so they do not prevent connection floods or idle connections from reaching HAProxy.');
     }
   }
 
@@ -821,8 +828,8 @@ export function buildServicePlan(model, form) {
   const request = input.kind === 'tcp'
     ? { scheme: 'tcp', host: primaryHost, sni: primaryHost, port: previewPort, path: '', method: 'GET', source: requestSource }
     : { scheme: input.kind === 'https' ? 'https' : 'http', host: primaryHost, sni: primaryHost, port: previewPort, path: '/', method: 'GET', source: requestSource };
-  const sourceSummary = input.allowedSources.length > 0
-    ? ` Source access is limited to ${input.allowedSources.length} subnet${input.allowedSources.length === 1 ? '' : 's'}; all other source addresses are denied.`
+  const sourceSummary = input.allowedSources.length > 0 && !loopbackPlacement
+    ? ` Backend source access is limited to ${input.allowedSources.length} subnet${input.allowedSources.length === 1 ? '' : 's'}; all other source addresses are denied at the backend.`
     : '';
 
   return {
@@ -842,6 +849,7 @@ export function buildServicePlan(model, form) {
     styleLabel: describeStyle(style),
     sourceAcl: {
       enabled: input.allowedSources.length > 0,
+      blocked: loopbackPlacement,
       sources: input.allowedSources,
       action: input.kind === 'tcp'
         ? 'tcp-request content reject unless allowed_subnets'

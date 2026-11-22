@@ -479,6 +479,32 @@ function matchingInternalFrontend(model, server) {
   return findFrontendByServerTarget(model, server);
 }
 
+function matchingLoopbackBind(server, frontend) {
+  return frontend.binds.find((bind) =>
+    String(bind.port) === String(server.port) && isLoopbackHost(bind.host),
+  ) || null;
+}
+
+function proxyProtocolPreservesSource(server, frontend) {
+  const sendsProxy = ['send-proxy', 'send-proxy-v2', 'send-proxy-v2-ssl', 'send-proxy-v2-ssl-cn']
+    .some((flag) => server.flags?.has(flag));
+  if (!sendsProxy) return false;
+  const bind = matchingLoopbackBind(server, frontend);
+  return Boolean(bind?.options?.['accept-proxy']);
+}
+
+function loopbackPeerSource(server, frontend) {
+  const bind = matchingLoopbackBind(server, frontend);
+  const host = String(bind?.host || server.host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  return host === '::1' ? '::1' : '127.0.0.1';
+}
+
+function modelUsesSourceAcl(model) {
+  return model.sections.some((section) =>
+    section.acls.some((acl) => acl.criterion === 'src'),
+  );
+}
+
 function chooseServer(backend, request, steps) {
   const allServers = backend.servers || [];
   const key = (server) => `${backend.name}/${server.name}`;
@@ -691,7 +717,24 @@ function backendResult(model, backend, request, context, steps, warnings, visite
         { level: 'ok', line: selection.server.line, frontend: internal.name, backend: backend.name, server: selection.server.name },
       ),
     );
-    return routeFrontend(model, internal, request, {
+    const sourcePreserved = proxyProtocolPreservesSource(selection.server, internal);
+    const nextSource = sourcePreserved ? request.source : loopbackPeerSource(selection.server, internal);
+    steps.push(
+      step(
+        'source',
+        sourcePreserved ? 'Client source preserved by PROXY protocol' : `Client source rewritten to ${nextSource}`,
+        sourcePreserved
+          ? `${backend.name} sends PROXY protocol and ${internal.name} accepts it, so the original client address remains available to later src ACLs.`
+          : `${backend.name} hands the connection to ${internal.name} over loopback without PROXY protocol. The original client address is no longer available; later src ACLs evaluate ${nextSource}.`,
+        { level: 'info', line: selection.server.line },
+      ),
+    );
+    if (!sourcePreserved && modelUsesSourceAcl(model)) {
+      warnings.push(
+        `The loopback hand-off to ${internal.name} does not preserve the client source. Later src ACLs evaluate ${nextSource}, not ${request.source}.`,
+      );
+    }
+    return routeFrontend(model, internal, { ...request, source: nextSource }, {
       ...context,
       tlsTerminated: request.scheme === 'https',
       httpVisible: internal.effectiveMode === 'http' || context.httpVisible,

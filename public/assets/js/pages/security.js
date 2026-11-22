@@ -113,10 +113,12 @@ export async function renderSecurity(view) {
         <div class="security-card warning-card">
           <h3>Not protected against</h3>
           <ul class="check-list">
+            <li>${icon('warning')}<span><strong>No built-in authentication or authorization.</strong> Anyone who can reach the listener can load the application. Keep it on localhost or require authentication at an HTTPS reverse proxy. See the <a href="https://github.com/RogerBergling/haproxy-gui/blob/main/docs/INSTALL.md#reverse-proxy-and-https" target="_blank" rel="noopener noreferrer">reverse-proxy guide</a>.</span></li>
             <li>${icon('warning')}<span><strong>Anyone with access to this browser profile or device</strong> can read localStorage, including exported history. Use a private window on shared machines and clear data afterwards.</span></li>
             <li>${icon('warning')}<span><strong>Malicious browser extensions or a compromised device</strong> can read page data. This app cannot defend the endpoint.</span></li>
             <li>${icon('warning')}<span><strong>Secrets placed in the config.</strong> Never paste private keys, passwords, API tokens or unencrypted credentials. HAProxy configs should reference secrets, not embed them.</span></li>
             <li>${icon('warning')}<span><strong>A shared public deployment</strong> still has the same browser-local model. The server operator cannot read your config, but they can serve modified JavaScript if they are malicious. Use a trusted deployment and verify the source.</span></li>
+            <li>${icon('warning')}<span><strong>Source-IP allowlists are backend policy, not authentication.</strong> HAProxy's <code>src</code> is the immediate peer address, and the wizard rejects loopback/bridge placements and <code>/0</code> catch-alls. Use a frontend ACL when exposure must be controlled before routing.</span></li>
             <li>${icon('warning')}<span><strong>Export and backup files</strong> are plaintext. Treat downloaded configs and history JSON as sensitive infrastructure documents.</span></li>
           </ul>
         </div>
@@ -144,7 +146,7 @@ export async function renderSecurity(view) {
       </ol>
     </section>
 
-    <div class="callout info">${icon('info')}<p><strong>Use the right tool for production validation.</strong> This app is a learning, review and change-planning tool. It is not a secrets manager, a deployment system or a replacement for <code>haproxy -c</code>. Always keep an independent rollback path.</p></div>
+    <div class="callout info">${icon('info')}<p><strong>Use the right tool for production validation.</strong> This app is a learning, review and change-planning tool. It is not a secrets manager, a deployment system or a replacement for <code>haproxy -c</code>. Always keep an independent rollback path. For vulnerability reporting, read the <a href="https://github.com/RogerBergling/haproxy-gui/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">security policy</a>; do not open a public issue for a security problem.</p></div>
   `;
 
   const onClearHistory = async () => {

@@ -18,6 +18,17 @@ The published container is a static file server. All parsing, analysis, topology
 
 ---
 
+## Documentation
+
+| Guide | Contents |
+|---|---|
+| [Install, upgrade and operate](docs/INSTALL.md) | Docker Compose, `docker run`, local Python, reverse proxy/TLS, image pinning, backup/restore, uninstall and troubleshooting |
+| [Security policy](SECURITY.md) | Threat model, source-ACL limitations, supported versions and private vulnerability reporting |
+| [Privacy and security model](#privacy-and-security-model) | What stays in the browser, what the container does and what it does not protect against |
+| [Development](#development) | Test commands, build metadata and repository layout |
+
+---
+
 ## The easy way to get it running
 
 **You only need Docker with Compose. No account, database, build step or host-side Python/Node installation.**
@@ -36,7 +47,7 @@ That is the whole installation for local use.
 1. Click **Import configuration**, or open one of the two anonymised examples.
 2. Open **Analyze** to see warnings and safe fixes.
 3. Open **Topology** to see the routing graph and simulate a request.
-4. Use **Add service** to preview a new HTTPS, HTTP/www or TLS-passthrough service, with an optional source-IP allowlist that denies every other client.
+4. Use **Add service** to preview a new HTTPS, HTTP/www or TLS-passthrough service, with an optional backend source-IP allowlist that denies every other request.
 5. Use **Compare** for two files and **History** to compare or restore saved versions.
 
 Everything — parsing, analysis, topology, simulation, history and generated changes — runs in your browser. Nothing is uploaded to the server.
@@ -52,7 +63,7 @@ docker compose up -d --force-recreate
 
 > **First pull/auth issue?** If GHCR says the package is private, make it public under **GitHub → Packages → haproxy-gui → Package settings**, or run `docker login ghcr.io` first.
 >
-> **Exposing it beyond localhost?** Put it behind an HTTPS reverse proxy you trust. Read the [security model](#privacy-and-security-model) before making it public.
+> **Exposing it beyond localhost?** The app has no built-in authentication or TLS. Keep it on localhost or put it behind an authenticated HTTPS reverse proxy you trust. Read the [installation guide](docs/INSTALL.md#reverse-proxy-and-https) and the [security model](#privacy-and-security-model) before making it public.
 
 Want the full feature tour first? [See what it does](#what-it-does) or jump to the [installation reference](#installation-reference), [development setup](#development) and [HAProxy versions](#haproxy-versions).
 
@@ -231,6 +242,7 @@ Server / container
 
 ### What it does **not** protect against
 
+- **The app has no built-in authentication or authorization.** Anyone who can reach the listener can load the application. Keep it bound to localhost or put an authenticated HTTPS reverse proxy in front of it.
 - Anyone with access to this browser profile/device can read `localStorage`, including configs, internal hostnames, IPs and history.
 - A malicious browser extension or compromised device can read page data.
 - Private keys, passwords or API tokens pasted into a config are exposed to the browser profile and any exported file. **Do not put secrets in a config.** Reference files with restricted permissions instead.
@@ -239,11 +251,15 @@ Server / container
 
 Read the full model in the app at **Security & privacy** (`#/security`) or in [the security page source](public/assets/js/pages/security.js).
 
+For vulnerability reporting and the supported-version policy, see [SECURITY.md](SECURITY.md). Do not open a public issue for a security problem.
+
 **If you expose the container beyond localhost**, place it behind an HTTPS reverse proxy you trust and keep the image updated. The static host does not encrypt traffic between the browser and the server; the privacy property is about where the configuration is stored and processed, not about transport encryption. The default local launcher binds to `127.0.0.1`.
 
 ---
 
 ## Installation reference
+
+The complete guide covers `docker run`, image digest pinning, reverse proxies, backup/restore, upgrades, uninstall and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 ### Docker Compose
 
@@ -283,6 +299,24 @@ curl -s http://localhost:8004/version.json | python3 -m json.tool
 
 If the first pull fails with an authentication error, the GHCR package is still private. Make it public once in **GitHub → Packages → haproxy-gui → Package settings → Change visibility → Public**, or authenticate the host with `docker login ghcr.io`.
 
+### Image tags and pinning
+
+```text
+ghcr.io/rogerbergling/haproxy-gui:latest
+ghcr.io/rogerbergling/haproxy-gui:main
+ghcr.io/rogerbergling/haproxy-gui:sha-<commit>
+ghcr.io/rogerbergling/haproxy-gui:v<tag>     # when a version tag is pushed
+```
+
+`latest` moves when `main` is published. Pin a commit tag or digest for production:
+
+```bash
+docker pull ghcr.io/rogerbergling/haproxy-gui:latest
+docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/rogerbergling/haproxy-gui:latest
+```
+
+Use the resulting `ghcr.io/...@sha256:...` reference in Compose. See [image tags and reproducible updates](docs/INSTALL.md#image-tags-and-reproducible-updates).
+
 Build the image yourself:
 
 ```bash
@@ -318,6 +352,15 @@ Open the site through the server, not as a `file://` URL, because ES modules and
 6. Use **Add service**, including the domain, listen IP/port, optional source CIDRs and drag-and-drop placement, to preview a new HTTPS/HTTP/SNI route and simulate the complete proposed file.
 7. Use **Compare** to compare two independent files, or **History** to compare any two saved versions.
 8. Export or download from **History** whenever you need a backup.
+
+### Backup, upgrades and removal
+
+- Configurations and up to 100 snapshots live in **browser `localStorage`**, not in the container. Export the current `.cfg` and **History → Export history** before upgrades or browser cleanup.
+- `localStorage` is scoped to the exact scheme, hostname and port. Changing the URL creates a different storage area; old data is not deleted but will not appear.
+- Update with `docker compose pull && docker compose up -d --force-recreate`, then check `/version.json`.
+- Remove with `docker compose down`; there are no server-side volumes or databases to delete. Clear browser data separately.
+
+See [install, backup and restore](docs/INSTALL.md#backup-and-restore) and [uninstall](docs/INSTALL.md#uninstall) for the full procedure.
 
 ---
 
@@ -424,8 +467,10 @@ public/
       versions.js              # branch and upgrade guidance
     pages/                     # home, workbench, analyze, topology, compare,
                                # services, history, learn, versions, glossary, security
+docs/                          # installation/operations guide and screenshots
 scripts/                       # verification and smoke tests
 tests/                         # Node test runner suites
+SECURITY.md                    # threat model and private vulnerability reporting
 .github/workflows/             # CI + multi-arch GHCR publishing
 ```
 
@@ -465,6 +510,14 @@ Cache-Control: no-store, no-cache, must-revalidate, max-age=0
 ```
 
 The static handler supports `GET`/`HEAD`, blocks directory indexes and keeps resolved paths inside `public/`.
+
+---
+
+## Support
+
+- Installation, reverse proxy, backup and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md)
+- Bugs and feature requests: <https://github.com/RogerBergling/haproxy-gui/issues>
+- Security reports: [SECURITY.md](SECURITY.md) — use GitHub private vulnerability reporting, not a public issue
 
 ---
 

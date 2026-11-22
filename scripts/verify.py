@@ -74,12 +74,14 @@ def require(path: str) -> None:
 def main() -> int:
     for path in [
         "README.md",
+        "SECURITY.md",
         "LICENSE",
         "package.json",
         "Dockerfile",
         "compose.yaml",
         ".dockerignore",
         "start.py",
+        "docs/INSTALL.md",
         "public/index.html",
         "public/LICENSE.txt",
         "public/version.json",
@@ -115,6 +117,29 @@ def main() -> int:
         require(path)
 
     index = read(PUBLIC / "index.html")
+    readme = read(ROOT / "README.md")
+    check("docs/INSTALL.md" in readme, "README must link to the installation guide")
+    check("SECURITY.md" in readme, "README must link to the security policy")
+    install_guide = read(ROOT / "docs" / "INSTALL.md")
+    for heading in ("## Requirements", "## Quick install", "## Backup and restore", "## Troubleshooting"):
+        check(heading in install_guide, f"docs/INSTALL.md is missing section: {heading}")
+    security_policy = read(ROOT / "SECURITY.md")
+    check("security/advisories/new" in security_policy, "SECURITY.md must explain private vulnerability reporting")
+    check("Source allowlist limitations" in security_policy, "SECURITY.md must document source-ACL limits")
+
+    # Local documentation links must resolve. External URLs and anchors are
+    # left to the host and the Markdown renderer.
+    for document in (ROOT / "README.md", ROOT / "docs" / "INSTALL.md", ROOT / "SECURITY.md"):
+        content = read(document)
+        for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", content):
+            if target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            path = target.split("#", 1)[0]
+            if not path:
+                continue
+            resolved = (document.parent / path).resolve()
+            check(resolved.is_file(), f"{document.relative_to(ROOT)} has broken local link: {target}")
+
     check("/assets/css/app.css" in index, "index.html must reference the local stylesheet")
     check("/assets/js/app.js" in index, "index.html must reference the local app module")
     check(

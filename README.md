@@ -1,5 +1,7 @@
 # HAProxy Workbench
 
+**Project facts (2026-11-25):** version **1.4.2** · browser SPA + Python 3 standard-library server · 79 JavaScript tests, 466 checks, smoke test · MIT licensed.
+
 [![CI](https://github.com/RogerBergling/haproxy-gui/actions/workflows/ci.yml/badge.svg)](https://github.com/RogerBergling/haproxy-gui/actions/workflows/ci.yml)
 
 **A local-first HAProxy configuration studio: import, explain, analyze, visualize, simulate and safely change HAProxy configs — without uploading the configuration anywhere.**
@@ -53,7 +55,8 @@ explicit choice, which overrides this default.
 | `light` | Light/white theme |
 | `system` | Follow the browser/OS `prefers-color-scheme` |
 
-Set it in `.env` or Compose:
+Set it in `.env` when using Compose. A direct `python3 start.py` reads the
+process environment only; export `APP_THEME` in the shell for that case.
 
 ```yaml
 environment:
@@ -92,9 +95,14 @@ Want the full feature tour first? [See what it does](#what-it-does) or jump to t
 
 ## Screenshots
 
-| Home (dark) | Home (light) |
+| Fix dialog (dark) | Home (light) |
 |---|---|
-| ![Home in dark theme](docs/screenshots/home.png) | ![Home in light theme](docs/screenshots/home-light.png) |
+| ![Health-check fix dialog in dark theme](docs/screenshots/fix-dialog.png) | ![Home in light theme](docs/screenshots/home-light.png) |
+
+The `home.png` capture in this repository shows the health-check fix dialog
+rather than the home screen, so it is labelled accordingly. `home-light.png`
+shows the current 1.4.2 home page. Regenerate the dark home capture when a
+browser is available.
 
 | Workbench | Analysis |
 |---|---|
